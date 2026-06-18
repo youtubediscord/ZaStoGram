@@ -45,6 +45,7 @@ static constexpr int32_t MT_PROXY_TLS_PROFILE_YANDEX = 3;
 static constexpr int32_t MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID = 4;
 static constexpr int32_t MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP = 5;
 
+static constexpr int32_t MT_PROXY_HANDSHAKE_PRIORITY_BYPASS = -1;
 static constexpr int32_t MT_PROXY_HANDSHAKE_PRIORITY_GENERIC = 0;
 static constexpr int32_t MT_PROXY_HANDSHAKE_PRIORITY_MEDIA = 1;
 static constexpr int32_t MT_PROXY_HANDSHAKE_PRIORITY_PUSH = 2;
@@ -1007,6 +1008,9 @@ bool ConnectionSocket::scheduleProxyHandshakeAdmissionIfNeeded(bool ipv6) {
     if (proxyAuthState < 10 || socketFd < 0) {
         return false;
     }
+    if (proxyHandshakeAdmissionPriority == MT_PROXY_HANDSHAKE_PRIORITY_BYPASS) {
+        return false;
+    }
     if (proxyHandshakeAdmissionReady) {
         proxyHandshakeAdmissionReady = false;
         return false;
@@ -1140,9 +1144,11 @@ void ConnectionSocket::releaseProxyHandshakeAdmission(bool succeeded, const char
     if (proxyHandshakeAdmissionActive && state.activeHandshakes > 0) {
         state.activeHandshakes--;
     }
+    int64_t clientHelloElapsed = proxyHandshakeClientHelloSentTime > 0 ? now - proxyHandshakeClientHelloSentTime : 0;
+    bool shouldApplyFreezeCooldown = proxyHandshakeAdmissionActive && proxyHandshakeClientHelloSentTime > 0 && clientHelloElapsed >= MT_PROXY_HANDSHAKE_FREEZE_TIMEOUT_MS;
     if (succeeded) {
         mtProxyRecordHandshakeSuccess(state, now);
-    } else if (proxyHandshakeAdmissionActive && proxyHandshakeClientHelloSentTime > 0) {
+    } else if (shouldApplyFreezeCooldown) {
         mtProxyApplyFreezeCooldown(state, now);
         if (LOGS_ENABLED) DEBUG_D("connection(%p) mtproxy_startup admission_freeze_cooldown reason=%s key=%s penalty=%d cooldown_ms=%ld", this, reason, proxyHandshakeAdmissionKey.c_str(), state.freezePenalty, (long) std::max<int64_t>(0, state.cooldownUntil - now));
     }
@@ -1951,7 +1957,7 @@ void ConnectionSocket::dropConnection() {
 }
 
 void ConnectionSocket::setMtProxyHandshakePriority(int32_t priority) {
-    if (priority < MT_PROXY_HANDSHAKE_PRIORITY_GENERIC || priority > MT_PROXY_HANDSHAKE_PRIORITY_PROXY_CHECK) {
+    if (priority < MT_PROXY_HANDSHAKE_PRIORITY_BYPASS || priority > MT_PROXY_HANDSHAKE_PRIORITY_PROXY_CHECK) {
         priority = MT_PROXY_HANDSHAKE_PRIORITY_PROXY_CHECK;
     }
     proxyHandshakeAdmissionPriority = priority;

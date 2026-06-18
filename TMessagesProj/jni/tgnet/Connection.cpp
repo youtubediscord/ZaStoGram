@@ -36,6 +36,7 @@ static int32_t mtProxyHandshakePriorityForConnectionType(ConnectionType type) {
         case ConnectionTypeUpload:
             return 4;
         case ConnectionTypeProxy:
+            return -1;
         default:
             return 5;
     }

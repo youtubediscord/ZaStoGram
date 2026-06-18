@@ -173,6 +173,13 @@ def main() -> int:
         "FakeTLS admission must receive MTProto connection priority before opening the socket",
     )
     require(
+        "MT_PROXY_HANDSHAKE_PRIORITY_BYPASS" in cpp
+        and "proxyHandshakeAdmissionPriority == MT_PROXY_HANDSHAKE_PRIORITY_BYPASS" in cpp
+        and "case ConnectionTypeProxy:" in connection_cpp
+        and "return -1;" in connection_cpp,
+        "Proxy checks must bypass hard FakeTLS admission queue to avoid false dead-proxy results",
+    )
+    require(
         "releaseProxyHandshakeAdmission(true" in cpp
         and "server_hello_hmac_ok" in cpp,
         "FakeTLS admission slot must be released as soon as server_hello_hmac_ok is reached",
@@ -187,6 +194,12 @@ def main() -> int:
         and "markProxyHandshakeClientHelloSent" in combined
         and "freeze" in cpp.lower(),
         "FakeTLS admission must record ClientHello time and apply freeze-aware cooldowns",
+    )
+    require(
+        "shouldApplyFreezeCooldown" in cpp
+        and "clientHelloElapsed >= MT_PROXY_HANDSHAKE_FREEZE_TIMEOUT_MS" in cpp
+        and "mtProxyApplyFreezeCooldown(state, now)" in cpp,
+        "FakeTLS cooldown must be applied only to real freezes, not every post-ClientHello close",
     )
     require(
         "pacingDeferred" not in combined,
