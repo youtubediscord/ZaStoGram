@@ -18,7 +18,6 @@ class ConnectionsManager;
 class ByteStream;
 class EventObject;
 class ByteArray;
-class Timer;
 
 class ConnectionSocket {
 
@@ -80,23 +79,6 @@ private:
     ByteArray *tempBuffer = nullptr;
     size_t bytesRead = 0;
     int8_t tlsState = 0;
-    uint32_t tlsRecordRemaining = 0; // payload bytes still owed for the in-flight TLS record
-
-    // DRS (dynamic record sizing): per-connection state so outgoing TLS application_data
-    // records vary in size like a real browser's congestion ramp instead of a fixed cap.
-    int8_t drsPhase = 0;            // 0 = slow-start, 1 = congestion-open, 2 = steady-state
-    uint32_t drsRecordsInPhase = 0;
-    uint32_t drsBytesInPhase = 0;
-    uint32_t drsLastCap = 0;
-    int8_t drsLastDir = 0;          // +1 grew, -1 shrank, 0 unknown
-    int64_t drsLastWriteTime = 0;
-    uint32_t drsIdleResetMs = 0;
-
-    // Non-blocking pacing: stagger bursts of proxy connects via a one-shot timer instead of a
-    // blocking sleep, so the shared network thread (and active transfers) is never stalled.
-    Timer *pacingTimer = nullptr;
-    bool pacingDeferred = false; // true between scheduling the delay and the resumed connect
-    bool pacingIpv6 = false;     // remembers openConnectionInternal's arg across the delay
 
     uint8_t proxyAuthState;
 
@@ -104,7 +86,6 @@ private:
     void closeSocket(int32_t reason, int32_t error);
     void openConnectionInternal(bool ipv6);
     void adjustWriteOp();
-    uint32_t nextTlsRecordSize();
 
     friend class EventObject;
     friend class ConnectionsManager;

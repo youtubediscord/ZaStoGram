@@ -27,7 +27,6 @@
 #include "Defines.h"
 #include "ConnectionsManager.h"
 #include "EventObject.h"
-#include "Timer.h"
 #include "NativeByteBuffer.h"
 #include "BuffersStorage.h"
 #include "Connection.h"
@@ -37,9 +36,8 @@
 static pthread_mutex_t proxyJitterMutex = PTHREAD_MUTEX_INITIALIZER;
 static int64_t lastProxyConnectTime = 0;
 
-// Crypto-secure RNG for observable-on-the-wire obfuscation (extension order, ECH/padding
-// lengths, record sizing, jitter). rand() is not crypto-secure and is predictably seeded,
-// so anything a censor can observe must be drawn from RAND_bytes instead.
+// Crypto-secure RNG for variable bytes inside the fake TLS profile: extension order and
+// ECH/padding lengths. Transport timing/data-path stays on the tsrman-proven code path.
 static uint32_t secureRandomUint32() {
     uint32_t v;
     RAND_bytes((uint8_t *) &v, sizeof(v));
@@ -429,42 +427,6 @@ public:
         return result;
     }
 
-    // Registry of VERIFIED-fresh browser ClientHello profiles, selected sticky per app session
-    // (a real browser keeps one fingerprint; different installs pick different ones -> population
-    // diversity). Add a profile only from a real capture whose JA4 is confirmed both realistic
-    // and distinct; a wrong/duplicate JA4 is worse than a single good one.
-    //
-    // WARNING: getDefault() (the upstream Telegram hello) must NEVER be listed here. A JA4 dump
-    // shows its fingerprint IS the known-BLOCKED one: t13d1516h2_8daaf6152771_d8a2da3f94cd
-    // (JA4 hashes only extension TYPES, so its ML-KEM key_share does not change the hash). The
-    // whole point of switching to getFirefoxDefault was to stop emitting that fingerprint.
-    static const TlsHello &pickProfile() {
-        static const TlsHello *const profiles[] = {
-            &getFirefoxDefault(), // JA4 t13d1616h2_86a278354501_eeeea6562960 (fresh, Firefox-like)
-        };
-        static const uint32_t count = sizeof(profiles) / sizeof(profiles[0]);
-        static int chosen = -1;
-        if (chosen < 0) {
-            chosen = (int) secureRandomBounded(count);
-        }
-        return *profiles[chosen];
-    }
-
-    // Refresh GREASE per connection. The profile builders are static singletons, so without this
-    // every connection would emit identical GREASE bytes (a static wire artifact). GREASE is
-    // excluded from JA4, so this does not change the fingerprint, only de-duplicates the raw bytes.
-    void randomizeGrease() {
-        RAND_bytes(grease, MAX_GREASE);
-        for (int a = 0; a < MAX_GREASE; a++) {
-            grease[a] = (uint8_t) ((grease[a] & 0xf0) + 0x0A);
-        }
-        for (size_t i = 1; i < MAX_GREASE; i += 2) {
-            if (grease[i] == grease[i + 1]) {
-                grease[i] ^= 0x10;
-            }
-        }
-    }
-
     uint32_t writeToBuffer(uint8_t *data) {
         uint32_t offset = 0;
         for (auto op : ops) {
@@ -603,11 +565,6 @@ ConnectionSocket::~ConnectionSocket() {
         tlsBuffer->reuse();
         tlsBuffer = nullptr;
     }
-    if (pacingTimer != nullptr) {
-        pacingTimer->stop();
-        delete pacingTimer;
-        pacingTimer = nullptr;
-    }
 }
 
 void ConnectionSocket::openConnection(std::string address, uint16_t port, std::string secret, bool ipv6, int32_t networkType) {
@@ -618,11 +575,6 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
     waitingForHostResolve = "";
     adjustWriteOpAfterResolve = false;
     tlsState = 0;
-    tlsRecordRemaining = 0;
-    if (pacingTimer != nullptr) {
-        pacingTimer->stop();
-    }
-    pacingDeferred = false;
     ConnectionsManager::getInstance(instanceNum).attachConnection(this);
 
     memset(&socketAddress, 0, sizeof(sockaddr_in));
@@ -756,43 +708,24 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
 }
 
 void ConnectionSocket::openConnectionInternal(bool ipv6) {
-    if (proxyAuthState >= 10 && !pacingDeferred) {
+    if (proxyAuthState >= 10) {
         pthread_mutex_lock(&proxyJitterMutex);
         int64_t now = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis();
         int64_t elapsed = now - lastProxyConnectTime;
         if (elapsed < 1200) {
-            // Stagger bursts of proxy connects with a heavy-tailed delay (most quick, a few long)
-            // so multiple FakeTLS handshakes don't hit one ip:port at once. Done NON-BLOCKING via a
-            // one-shot timer: the shared network thread is never put to sleep, so active transfers
-            // on other connections are not stalled (unlike a blocking sleep or an MSS clamp).
-            uint32_t roll = secureRandomBounded(100);
-            int delay;
-            if (roll < 70) {
-                delay = 150 + (int) secureRandomBounded(350);   // 70%: 150-500ms
-            } else if (roll < 92) {
-                delay = 500 + (int) secureRandomBounded(500);   // 22%: 500-1000ms
-            } else {
-                delay = 1000 + (int) secureRandomBounded(500);  // 8%: 1000-1500ms (tail)
-            }
+            int delay = 500 + (rand() % 501);
+            if (LOGS_ENABLED) DEBUG_D("connection(%p) jitter: elapsed=%ld, delay=%d", this, (long) elapsed, delay);
             lastProxyConnectTime = now + delay;
-            pthread_mutex_unlock(&proxyJitterMutex);
-            if (LOGS_ENABLED) DEBUG_D("connection(%p) pacing: elapsed=%ld, defer=%dms", this, (long) elapsed, delay);
-            pacingDeferred = true; // the resumed call skips this block and connects
-            pacingIpv6 = ipv6;
-            if (pacingTimer == nullptr) {
-                pacingTimer = new Timer(instanceNum, [&] {
-                    pacingTimer->stop();
-                    openConnectionInternal(pacingIpv6);
-                });
-            }
-            pacingTimer->setTimeout((uint32_t) delay, false);
-            pacingTimer->start();
-            return;
+            struct timespec ts;
+            ts.tv_sec = delay / 1000;
+            ts.tv_nsec = (delay % 1000) * 1000000L;
+            nanosleep(&ts, nullptr);
+        } else {
+            if (LOGS_ENABLED) DEBUG_D("connection(%p) jitter: elapsed=%ld, no delay", this, (long) elapsed);
+            lastProxyConnectTime = now;
         }
-        lastProxyConnectTime = now;
         pthread_mutex_unlock(&proxyJitterMutex);
     }
-    pacingDeferred = false;
     int epolFd = ConnectionsManager::getInstance(instanceNum).epolFd;
     int yes = 1;
     if (setsockopt(socketFd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(int))) {
@@ -858,11 +791,6 @@ void ConnectionSocket::closeSocket(int32_t reason, int32_t error) {
     adjustWriteOpAfterResolve = false;
     proxyAuthState = 0;
     tlsState = 0;
-    tlsRecordRemaining = 0;
-    if (pacingTimer != nullptr) {
-        pacingTimer->stop();
-    }
-    pacingDeferred = false;
     onConnectedSent = false;
     outgoingByteStream->clean();
     if (tlsBuffer != nullptr) {
@@ -870,94 +798,6 @@ void ConnectionSocket::closeSocket(int32_t reason, int32_t error) {
         tlsBuffer = nullptr;
     }
     onDisconnected(reason, error);
-}
-
-uint32_t ConnectionSocket::nextTlsRecordSize() {
-    static const uint32_t MIN_CAP = 900;
-    static const uint32_t MAX_CAP = 16384; // TLS record max; well within tempBuffer (65 KB)
-    int64_t now = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis();
-
-    // Idle reset: after a long gap the connection looks "fresh" again, so restart the ramp.
-    if (drsIdleResetMs == 0) {
-        drsIdleResetMs = 250 + secureRandomBounded(951); // 250..1200 ms
-    }
-    if (drsLastWriteTime != 0 && now - drsLastWriteTime >= (int64_t) drsIdleResetMs) {
-        drsPhase = 0;
-        drsRecordsInPhase = 0;
-        drsBytesInPhase = 0;
-        drsLastDir = 0;
-        drsIdleResetMs = 250 + secureRandomBounded(951);
-    }
-    drsLastWriteTime = now;
-
-    struct Bin { uint32_t lo, hi, w; };
-    static const Bin slowStart[]  = {{1200, 1460, 1}, {1461, 1700, 1}};
-    static const Bin congestion[] = {{1400, 1900, 1}, {1901, 2600, 2}};
-    static const Bin steady[]     = {{2400, 4096, 2}, {4097, 8192, 2}, {8193, 12288, 1}};
-    const Bin *bins;
-    size_t binCount;
-    if (drsPhase == 0) {
-        bins = slowStart;
-        binCount = 2;
-    } else if (drsPhase == 1) {
-        bins = congestion;
-        binCount = 2;
-    } else {
-        bins = steady;
-        binCount = 3;
-    }
-
-    uint32_t cap = MIN_CAP;
-    for (int attempt = 0; attempt < 16; attempt++) {
-        uint32_t total = 0;
-        for (size_t i = 0; i < binCount; i++) {
-            total += bins[i].w;
-        }
-        uint32_t r = secureRandomBounded(total);
-        const Bin *b = &bins[0];
-        for (size_t i = 0; i < binCount; i++) {
-            if (r < bins[i].w) {
-                b = &bins[i];
-                break;
-            }
-            r -= bins[i].w;
-        }
-        int32_t val = (int32_t) (b->lo + secureRandomBounded(b->hi - b->lo + 1));
-        val += (int32_t) secureRandomBounded(49) - 24; // +-24 jitter to blur bin edges
-        if (val < (int32_t) b->lo) val = (int32_t) b->lo;
-        if (val > (int32_t) b->hi) val = (int32_t) b->hi;
-        if (val < (int32_t) MIN_CAP) val = (int32_t) MIN_CAP;
-        if (val > (int32_t) MAX_CAP) val = (int32_t) MAX_CAP;
-        cap = (uint32_t) val;
-
-        if (drsLastCap != 0) {
-            if (cap == drsLastCap) {
-                continue; // avoid exact-repeat quantization
-            }
-            int8_t dir = cap > drsLastCap ? 1 : -1;
-            if (dir == drsLastDir && secureRandomBounded(2) == 0) {
-                continue; // discourage long monotone staircases
-            }
-        }
-        break;
-    }
-
-    if (drsLastCap != 0) {
-        drsLastDir = cap > drsLastCap ? 1 : (cap < drsLastCap ? -1 : drsLastDir);
-    }
-    drsLastCap = cap;
-    drsRecordsInPhase++;
-    drsBytesInPhase += cap;
-    if (drsPhase == 0 && drsRecordsInPhase >= 4) {
-        drsPhase = 1;
-        drsRecordsInPhase = 0;
-        drsBytesInPhase = 0;
-    } else if (drsPhase == 1 && drsBytesInPhase >= 32768) {
-        drsPhase = 2;
-        drsRecordsInPhase = 0;
-        drsBytesInPhase = 0;
-    }
-    return cap;
 }
 
 void ConnectionSocket::onEvent(uint32_t events) {
@@ -1193,8 +1033,7 @@ void ConnectionSocket::onEvent(uint32_t events) {
                         lastEventTime = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis();
                         tlsHashMismatch = false;
                         proxyAuthState = 11;
-                        TlsHello hello = TlsHello::pickProfile();
-                        hello.randomizeGrease();
+                        TlsHello hello = TlsHello::getFirefoxDefault();
                         hello.setDomain(currentSecretDomain);
                         uint32_t size = hello.writeToBuffer(tempBuffer->bytes);
                         uint32_t outLength;
