@@ -18,6 +18,7 @@ class ConnectionsManager;
 class ByteStream;
 class EventObject;
 class ByteArray;
+class Timer;
 
 class ConnectionSocket {
 
@@ -90,6 +91,12 @@ private:
     int8_t drsLastDir = 0;          // +1 grew, -1 shrank, 0 unknown
     int64_t drsLastWriteTime = 0;
     uint32_t drsIdleResetMs = 0;
+
+    // Non-blocking pacing: stagger bursts of proxy connects via a one-shot timer instead of a
+    // blocking sleep, so the shared network thread (and active transfers) is never stalled.
+    Timer *pacingTimer = nullptr;
+    bool pacingDeferred = false; // true between scheduling the delay and the resumed connect
+    bool pacingIpv6 = false;     // remembers openConnectionInternal's arg across the delay
 
     uint8_t proxyAuthState;
 

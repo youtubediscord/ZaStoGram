@@ -603,6 +603,11 @@ ConnectionSocket::~ConnectionSocket() {
         tlsBuffer->reuse();
         tlsBuffer = nullptr;
     }
+    if (pacingTimer != nullptr) {
+        pacingTimer->stop();
+        delete pacingTimer;
+        pacingTimer = nullptr;
+    }
 }
 
 void ConnectionSocket::openConnection(std::string address, uint16_t port, std::string secret, bool ipv6, int32_t networkType) {
@@ -614,6 +619,10 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
     adjustWriteOpAfterResolve = false;
     tlsState = 0;
     tlsRecordRemaining = 0;
+    if (pacingTimer != nullptr) {
+        pacingTimer->stop();
+    }
+    pacingDeferred = false;
     ConnectionsManager::getInstance(instanceNum).attachConnection(this);
 
     memset(&socketAddress, 0, sizeof(sockaddr_in));
@@ -747,14 +756,15 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
 }
 
 void ConnectionSocket::openConnectionInternal(bool ipv6) {
-    if (proxyAuthState >= 10) {
+    if (proxyAuthState >= 10 && !pacingDeferred) {
         pthread_mutex_lock(&proxyJitterMutex);
         int64_t now = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis();
         int64_t elapsed = now - lastProxyConnectTime;
         if (elapsed < 1200) {
-            // Heavy-tailed reconnect delay: most reconnects are quick, a few are long, instead
-            // of a mechanical flat 500-1000ms window. Bounded to 1500ms to limit how long this
-            // (blocking) sleep stalls the shared network thread during reconnect storms.
+            // Stagger bursts of proxy connects with a heavy-tailed delay (most quick, a few long)
+            // so multiple FakeTLS handshakes don't hit one ip:port at once. Done NON-BLOCKING via a
+            // one-shot timer: the shared network thread is never put to sleep, so active transfers
+            // on other connections are not stalled (unlike a blocking sleep or an MSS clamp).
             uint32_t roll = secureRandomBounded(100);
             int delay;
             if (roll < 70) {
@@ -764,18 +774,25 @@ void ConnectionSocket::openConnectionInternal(bool ipv6) {
             } else {
                 delay = 1000 + (int) secureRandomBounded(500);  // 8%: 1000-1500ms (tail)
             }
-            if (LOGS_ENABLED) DEBUG_D("connection(%p) jitter: elapsed=%ld, delay=%d", this, (long) elapsed, delay);
             lastProxyConnectTime = now + delay;
-            struct timespec ts;
-            ts.tv_sec = delay / 1000;
-            ts.tv_nsec = (delay % 1000) * 1000000L;
-            nanosleep(&ts, nullptr);
-        } else {
-            if (LOGS_ENABLED) DEBUG_D("connection(%p) jitter: elapsed=%ld, no delay", this, (long) elapsed);
-            lastProxyConnectTime = now;
+            pthread_mutex_unlock(&proxyJitterMutex);
+            if (LOGS_ENABLED) DEBUG_D("connection(%p) pacing: elapsed=%ld, defer=%dms", this, (long) elapsed, delay);
+            pacingDeferred = true; // the resumed call skips this block and connects
+            pacingIpv6 = ipv6;
+            if (pacingTimer == nullptr) {
+                pacingTimer = new Timer(instanceNum, [&] {
+                    pacingTimer->stop();
+                    openConnectionInternal(pacingIpv6);
+                });
+            }
+            pacingTimer->setTimeout((uint32_t) delay, false);
+            pacingTimer->start();
+            return;
         }
+        lastProxyConnectTime = now;
         pthread_mutex_unlock(&proxyJitterMutex);
     }
+    pacingDeferred = false;
     int epolFd = ConnectionsManager::getInstance(instanceNum).epolFd;
     int yes = 1;
     if (setsockopt(socketFd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(int))) {
@@ -842,6 +859,10 @@ void ConnectionSocket::closeSocket(int32_t reason, int32_t error) {
     proxyAuthState = 0;
     tlsState = 0;
     tlsRecordRemaining = 0;
+    if (pacingTimer != nullptr) {
+        pacingTimer->stop();
+    }
+    pacingDeferred = false;
     onConnectedSent = false;
     outgoingByteStream->clean();
     if (tlsBuffer != nullptr) {
@@ -1186,10 +1207,23 @@ void ConnectionSocket::onEvent(uint32_t events) {
                         memcpy(tempBuffer->bytes + 11, tempBuffer->bytes + 64 * 1024, 32);
                         bytesRead = 0;
 
-                        if (send(socketFd, tempBuffer->bytes, size, 0) < 0) {
-                            if (LOGS_ENABLED) DEBUG_E("connection(%p) send failed", this);
-                            closeSocket(1, -1);
-                            return;
+                        // Fragment the ClientHello across TCP segments so a DPI that extracts JA4
+                        // from a single packet cannot see the cipher/extension list. The first
+                        // segment is cut before cipher_suites (offset ~76), so ciphers/extensions
+                        // land in later segments. TCP_NODELAY (set above) makes each send() its own
+                        // segment. Unlike an MSS clamp this leaves post-handshake data segments
+                        // full-size, so throughput is unaffected. Cut is randomized per connection.
+                        uint32_t firstCut = 24 + secureRandomBounded(40); // 24..63, before cipher_suites
+                        uint32_t sentHello = 0;
+                        while (sentHello < size) {
+                            uint32_t want = (sentHello == 0 && firstCut < size) ? firstCut : (size - sentHello);
+                            ssize_t w = send(socketFd, tempBuffer->bytes + sentHello, want, 0);
+                            if (w <= 0) {
+                                if (LOGS_ENABLED) DEBUG_E("connection(%p) send failed", this);
+                                closeSocket(1, -1);
+                                return;
+                            }
+                            sentHello += (uint32_t) w;
                         }
                         adjustWriteOp();
                     }

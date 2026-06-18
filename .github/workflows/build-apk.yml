@@ -1,0 +1,84 @@
+name: Build ZaStoGram APK
+
+# Сборка устанавливаемого APK прямо в облаке GitHub — локально ничего ставить не нужно.
+#
+# Как запустить:
+#   1) Вкладка Actions в репозитории -> слева "Build ZaStoGram APK" -> кнопка "Run workflow".
+#   2) Дождаться зелёной галочки (первая сборка ~40-90 мин, потом быстрее за счёт кэша).
+#   3) Внизу страницы запуска -> раздел "Artifacts" -> скачать "ZaStoGram-standalone-afat".
+#      Внутри .zip лежит .apk — переносишь на телефон и ставишь (разреши установку из этого источника).
+#
+# Для реального входа в Telegram добавь свои api_id/api_hash с https://my.telegram.org
+# в Settings -> Secrets and variables -> Actions:  TELEGRAM_API_ID  и  TELEGRAM_API_HASH.
+# Без них соберётся с тестовым APP_ID=4 (вход может не работать).
+
+on:
+  workflow_dispatch: {}        # ручной запуск кнопкой
+  push:
+    branches: [ master ]       # и автоматически при пуше в master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true
+          df -h
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Android cmdline-tools
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK / NDK / CMake (versions from the project)
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "build-tools;30.0.3" \
+            "ndk;27.2.12479018" \
+            "cmake;3.10.2.4988404"
+
+      - name: Legacy dx hack (build-tools 35 reuses dx from 30.0.3)
+        run: |
+          BT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools"
+          sudo cp "$BT/30.0.3/dx" "$BT/35.0.0/dx"
+          sudo cp "$BT/30.0.3/lib/dx.jar" "$BT/35.0.0/lib/dx.jar"
+
+      - name: Inject your api_id / api_hash (optional, from repo secrets)
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          BV=TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java
+          if [ -n "$TELEGRAM_API_ID" ] && [ -n "$TELEGRAM_API_HASH" ]; then
+            sed -i "s/public static int APP_ID = .*/public static int APP_ID = ${TELEGRAM_API_ID};/" "$BV"
+            sed -i "s#public static String APP_HASH = .*#public static String APP_HASH = \"${TELEGRAM_API_HASH}\";#" "$BV"
+            echo "Using custom api_id from secrets."
+          else
+            echo "::warning::No TELEGRAM_API_ID / TELEGRAM_API_HASH secrets set — building with default APP_ID=4. Login may be limited; add your own from my.telegram.org."
+          fi
+
+      - name: Build Standalone universal APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :TMessagesProj_AppStandalone:assembleAfatStandalone --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZaStoGram-standalone-afat
+          path: '**/build/outputs/apk/**/*.apk'
+          if-no-files-found: error
