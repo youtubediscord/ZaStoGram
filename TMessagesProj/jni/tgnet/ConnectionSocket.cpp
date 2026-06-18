@@ -9,6 +9,7 @@
 #include <cassert>
 #include <unistd.h>
 #include <fcntl.h>
+#include <time.h>
 #include <cerrno>
 #include <sys/socket.h>
 #include <memory.h>
@@ -31,6 +32,32 @@
 #include "BuffersStorage.h"
 #include "Connection.h"
 #include <random>
+#include <pthread.h>
+
+static pthread_mutex_t proxyJitterMutex = PTHREAD_MUTEX_INITIALIZER;
+static int64_t lastProxyConnectTime = 0;
+
+// Crypto-secure RNG for observable-on-the-wire obfuscation (extension order, ECH/padding
+// lengths, record sizing, jitter). rand() is not crypto-secure and is predictably seeded,
+// so anything a censor can observe must be drawn from RAND_bytes instead.
+static uint32_t secureRandomUint32() {
+    uint32_t v;
+    RAND_bytes((uint8_t *) &v, sizeof(v));
+    return v;
+}
+
+// Unbiased uniform value in [0, bound) via rejection sampling (avoids modulo bias).
+static uint32_t secureRandomBounded(uint32_t bound) {
+    if (bound <= 1) {
+        return 0;
+    }
+    uint32_t threshold = (uint32_t) (-bound) % bound; // == 2^32 mod bound
+    uint32_t v;
+    do {
+        v = secureRandomUint32();
+    } while (v < threshold);
+    return v % bound;
+}
 
 #ifndef EPOLLRDHUP
 #define EPOLLRDHUP 0x2000
@@ -251,6 +278,72 @@ public:
 
     };
 
+    static const TlsHello &getFirefoxDefault() {
+        static TlsHello result = [] {
+            TlsHello res;
+            res.ops = {
+                Op::string("\x16\x03\x01", 3),
+                Op::begin_scope(),
+                Op::string("\x01\x00", 2),
+                Op::begin_scope(),
+                Op::string("\x03\x03", 2),
+                Op::zero(32),
+                Op::string("\x20", 1),
+                Op::random(32),
+                Op::string("\x00\x22", 2),
+                Op::grease(0),
+                Op::string("\x13\x01\x13\x03\x13\x02\xc0\x2b\xc0\x2f\xcc\xa9\xcc\xa8\xc0\x2c\xc0\x30\xc0\x0a\xc0\x13\xc0\x14\x00\x9c\x00\x9d\x00\x2f\x00\x35", 32),
+                Op::string("\x01\x00", 2),
+                Op::begin_scope(),
+                Op::string("\x00\x00", 2),
+                Op::begin_scope(),
+                Op::begin_scope(),
+                Op::string("\x00", 1),
+                Op::begin_scope(),
+                Op::domain(),
+                Op::end_scope(),
+                Op::end_scope(),
+                Op::end_scope(),
+                Op::string("\x00\x17\x00\x00", 4),
+                Op::string("\xff\x01\x00\x01\x00", 5),
+                Op::string("\x00\x0a\x00\x10\x00\x0e", 6),
+                Op::grease(2),
+                Op::string("\x00\x1d\x00\x17\x00\x18\x00\x19\x01\x00\x01\x01", 12),
+                Op::string("\x00\x0b\x00\x02\x01\x00", 6),
+                Op::string("\x00\x23\x00\x00", 4),
+                Op::string("\x00\x10\x00\x0e\x00\x0c\x02\x68\x32\x08\x68\x74\x74\x70\x2f\x31\x2e\x31", 18),
+                Op::string("\x00\x05\x00\x05\x01\x00\x00\x00\x00", 9),
+                Op::string("\x00\x22\x00\x0a\x00\x08\x04\x03\x05\x03\x06\x03\x02\x03", 14),
+                Op::string("\x00\x33\x05\x2f\x05\x2d", 6),
+                Op::string("\x11\xec\x04\xc0", 4),
+                Op::random(1216),
+                Op::string("\x00\x1d\x00\x20", 4),
+                Op::K(),
+                Op::string("\x00\x17\x00\x41", 4),
+                Op::random(65),
+                Op::string("\x00\x2b\x00\x07\x06", 5),
+                Op::grease(4),
+                Op::string("\x03\x04\x03\x03", 4),
+                Op::string("\x00\x0d\x00\x18\x00\x16\x04\x03\x05\x03\x06\x03\x08\x04\x08\x05\x08\x06\x04\x01\x05\x01\x06\x01\x02\x03\x02\x01", 28),
+                Op::string("\x00\x2d\x00\x02\x01\x01", 6),
+                Op::string("\x00\x1c\x00\x02\x40\x01", 6),
+                Op::string("\x00\x1b\x00\x07\x06\x00\x01\x00\x02\x00\x03", 11),
+                Op::string("\xfe\x0d\x01\x19", 4),
+                Op::string("\x00\x00\x01\x00\x01", 5),
+                Op::random(1),
+                Op::string("\x00\x20", 2),
+                Op::random(32),
+                Op::string("\x00\xef", 2),
+                Op::random(239),
+                Op::end_scope(),
+                Op::end_scope(),
+                Op::end_scope()
+            };
+            return res;
+        }();
+        return result;
+    }
+
     static const TlsHello &getDefault() {
         static TlsHello result = [] {
             TlsHello res;
@@ -336,6 +429,39 @@ public:
         return result;
     }
 
+    // Registry of browser ClientHello profiles. Sticky for the whole app session: this client
+    // consistently presents ONE browser's JA4 (a real browser never changes its fingerprint
+    // between connections), while different installs/launches pick a different profile, so the
+    // fork's fingerprint is not a single universal marker (the weakness of one hard-coded hello).
+    // Adding a profile = author its builder + extend the modulo and switch below. New profiles
+    // should be derived from REAL browser captures: a JA4 that matches no real browser is worse
+    // than reusing a correct one.
+    static const TlsHello &pickProfile() {
+        static int chosen = -1;
+        if (chosen < 0) {
+            chosen = (int) secureRandomBounded(2);
+        }
+        switch (chosen) {
+            case 0:  return getFirefoxDefault(); // Firefox-like JA4 (no padding ext, fixed ECH len)
+            default: return getDefault();        // post-quantum Chrome-like JA4 (X25519MLKEM768)
+        }
+    }
+
+    // Refresh GREASE per connection. The profile builders are static singletons, so without this
+    // every connection would emit identical GREASE bytes (a static wire artifact). GREASE is
+    // excluded from JA4, so this does not change the fingerprint, only de-duplicates the raw bytes.
+    void randomizeGrease() {
+        RAND_bytes(grease, MAX_GREASE);
+        for (int a = 0; a < MAX_GREASE; a++) {
+            grease[a] = (uint8_t) ((grease[a] & 0xf0) + 0x0A);
+        }
+        for (size_t i = 1; i < MAX_GREASE; i += 2) {
+            if (grease[i] == grease[i + 1]) {
+                grease[i] ^= 0x10;
+            }
+        }
+    }
+
     uint32_t writeToBuffer(uint8_t *data) {
         uint32_t offset = 0;
         for (auto op : ops) {
@@ -405,7 +531,7 @@ private:
                 break;
             }
             case Type::E: {
-                size_t r = rand() % 4;
+                size_t r = secureRandomBounded(4);
                 size_t length = (r == 0 ? 144 :
                                 (r == 1 ? 176 :
                                 (r == 2 ? 208 : 240)));
@@ -415,10 +541,14 @@ private:
             }
             case Type::P: {
                 auto length = offset;
-                if (length <= 513) {
+                // Randomized padding target instead of a fixed 513-byte ClientHello: a single
+                // fixed length is itself a DPI signature (the legacy faketls 517-byte record).
+                // Dormant for profiles whose body already exceeds the target (e.g. ML-KEM Chrome).
+                uint32_t target = 512 + secureRandomBounded(257); // 512..768
+                if (length <= target) {
                     writeOp(Op::string("\x00\x15", 2), data, offset);
                     writeOp(Op::begin_scope(), data, offset);
-                    writeOp(Op::zero(513 - length), data, offset);
+                    writeOp(Op::zero(target - length), data, offset);
                     writeOp(Op::end_scope(), data, offset);
                 }
                 break;
@@ -430,7 +560,7 @@ private:
                 }
                 size_t size = list.size();
                 for (int i = 0; i < size - 1; i++) {
-                    int j = i + rand() % (size - i);
+                    int j = i + (int) secureRandomBounded((uint32_t) (size - i));
                     if (i != j) {
                         std::swap(list[i], list[j]);
                     }
@@ -480,6 +610,7 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
     waitingForHostResolve = "";
     adjustWriteOpAfterResolve = false;
     tlsState = 0;
+    tlsRecordRemaining = 0;
     ConnectionsManager::getInstance(instanceNum).attachConnection(this);
 
     memset(&socketAddress, 0, sizeof(sockaddr_in));
@@ -613,6 +744,35 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
 }
 
 void ConnectionSocket::openConnectionInternal(bool ipv6) {
+    if (proxyAuthState >= 10) {
+        pthread_mutex_lock(&proxyJitterMutex);
+        int64_t now = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis();
+        int64_t elapsed = now - lastProxyConnectTime;
+        if (elapsed < 1200) {
+            // Heavy-tailed reconnect delay: most reconnects are quick, a few are long, instead
+            // of a mechanical flat 500-1000ms window. Bounded to 1500ms to limit how long this
+            // (blocking) sleep stalls the shared network thread during reconnect storms.
+            uint32_t roll = secureRandomBounded(100);
+            int delay;
+            if (roll < 70) {
+                delay = 150 + (int) secureRandomBounded(350);   // 70%: 150-500ms
+            } else if (roll < 92) {
+                delay = 500 + (int) secureRandomBounded(500);   // 22%: 500-1000ms
+            } else {
+                delay = 1000 + (int) secureRandomBounded(500);  // 8%: 1000-1500ms (tail)
+            }
+            if (LOGS_ENABLED) DEBUG_D("connection(%p) jitter: elapsed=%ld, delay=%d", this, (long) elapsed, delay);
+            lastProxyConnectTime = now + delay;
+            struct timespec ts;
+            ts.tv_sec = delay / 1000;
+            ts.tv_nsec = (delay % 1000) * 1000000L;
+            nanosleep(&ts, nullptr);
+        } else {
+            if (LOGS_ENABLED) DEBUG_D("connection(%p) jitter: elapsed=%ld, no delay", this, (long) elapsed);
+            lastProxyConnectTime = now;
+        }
+        pthread_mutex_unlock(&proxyJitterMutex);
+    }
     int epolFd = ConnectionsManager::getInstance(instanceNum).epolFd;
     int yes = 1;
     if (setsockopt(socketFd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(int))) {
@@ -678,6 +838,7 @@ void ConnectionSocket::closeSocket(int32_t reason, int32_t error) {
     adjustWriteOpAfterResolve = false;
     proxyAuthState = 0;
     tlsState = 0;
+    tlsRecordRemaining = 0;
     onConnectedSent = false;
     outgoingByteStream->clean();
     if (tlsBuffer != nullptr) {
@@ -685,6 +846,94 @@ void ConnectionSocket::closeSocket(int32_t reason, int32_t error) {
         tlsBuffer = nullptr;
     }
     onDisconnected(reason, error);
+}
+
+uint32_t ConnectionSocket::nextTlsRecordSize() {
+    static const uint32_t MIN_CAP = 900;
+    static const uint32_t MAX_CAP = 16384; // TLS record max; well within tempBuffer (65 KB)
+    int64_t now = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis();
+
+    // Idle reset: after a long gap the connection looks "fresh" again, so restart the ramp.
+    if (drsIdleResetMs == 0) {
+        drsIdleResetMs = 250 + secureRandomBounded(951); // 250..1200 ms
+    }
+    if (drsLastWriteTime != 0 && now - drsLastWriteTime >= (int64_t) drsIdleResetMs) {
+        drsPhase = 0;
+        drsRecordsInPhase = 0;
+        drsBytesInPhase = 0;
+        drsLastDir = 0;
+        drsIdleResetMs = 250 + secureRandomBounded(951);
+    }
+    drsLastWriteTime = now;
+
+    struct Bin { uint32_t lo, hi, w; };
+    static const Bin slowStart[]  = {{1200, 1460, 1}, {1461, 1700, 1}};
+    static const Bin congestion[] = {{1400, 1900, 1}, {1901, 2600, 2}};
+    static const Bin steady[]     = {{2400, 4096, 2}, {4097, 8192, 2}, {8193, 12288, 1}};
+    const Bin *bins;
+    size_t binCount;
+    if (drsPhase == 0) {
+        bins = slowStart;
+        binCount = 2;
+    } else if (drsPhase == 1) {
+        bins = congestion;
+        binCount = 2;
+    } else {
+        bins = steady;
+        binCount = 3;
+    }
+
+    uint32_t cap = MIN_CAP;
+    for (int attempt = 0; attempt < 16; attempt++) {
+        uint32_t total = 0;
+        for (size_t i = 0; i < binCount; i++) {
+            total += bins[i].w;
+        }
+        uint32_t r = secureRandomBounded(total);
+        const Bin *b = &bins[0];
+        for (size_t i = 0; i < binCount; i++) {
+            if (r < bins[i].w) {
+                b = &bins[i];
+                break;
+            }
+            r -= bins[i].w;
+        }
+        int32_t val = (int32_t) (b->lo + secureRandomBounded(b->hi - b->lo + 1));
+        val += (int32_t) secureRandomBounded(49) - 24; // +-24 jitter to blur bin edges
+        if (val < (int32_t) b->lo) val = (int32_t) b->lo;
+        if (val > (int32_t) b->hi) val = (int32_t) b->hi;
+        if (val < (int32_t) MIN_CAP) val = (int32_t) MIN_CAP;
+        if (val > (int32_t) MAX_CAP) val = (int32_t) MAX_CAP;
+        cap = (uint32_t) val;
+
+        if (drsLastCap != 0) {
+            if (cap == drsLastCap) {
+                continue; // avoid exact-repeat quantization
+            }
+            int8_t dir = cap > drsLastCap ? 1 : -1;
+            if (dir == drsLastDir && secureRandomBounded(2) == 0) {
+                continue; // discourage long monotone staircases
+            }
+        }
+        break;
+    }
+
+    if (drsLastCap != 0) {
+        drsLastDir = cap > drsLastCap ? 1 : (cap < drsLastCap ? -1 : drsLastDir);
+    }
+    drsLastCap = cap;
+    drsRecordsInPhase++;
+    drsBytesInPhase += cap;
+    if (drsPhase == 0 && drsRecordsInPhase >= 4) {
+        drsPhase = 1;
+        drsRecordsInPhase = 0;
+        drsBytesInPhase = 0;
+    } else if (drsPhase == 1 && drsBytesInPhase >= 32768) {
+        drsPhase = 2;
+        drsRecordsInPhase = 0;
+        drsBytesInPhase = 0;
+    }
+    return cap;
 }
 
 void ConnectionSocket::onEvent(uint32_t events) {
@@ -920,7 +1169,8 @@ void ConnectionSocket::onEvent(uint32_t events) {
                         lastEventTime = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis();
                         tlsHashMismatch = false;
                         proxyAuthState = 11;
-                        TlsHello hello = TlsHello::getDefault();
+                        TlsHello hello = TlsHello::pickProfile();
+                        hello.randomizeGrease();
                         hello.setDomain(currentSecretDomain);
                         uint32_t size = hello.writeToBuffer(tempBuffer->bytes);
                         uint32_t outLength;
@@ -1011,9 +1261,6 @@ void ConnectionSocket::onEvent(uint32_t events) {
                 if (remaining) {
                     ssize_t sentLength;
                     if (tlsState != 0) {
-                        if (remaining > 2878) {
-                            remaining = 2878;
-                        }
                         size_t headersSize = 0;
                         if (tlsState == 1) {
                             static std::string header1 = std::string("\x14\x03\x03\x00\x01\x01", 6);
@@ -1021,17 +1268,26 @@ void ConnectionSocket::onEvent(uint32_t events) {
                             headersSize += header1.size();
                             tlsState = 2;
                         }
-                        static std::string header2 = std::string("\x17\x03\x03", 3);
-                        std::memcpy(tempBuffer->bytes + headersSize, header2.data(), header2.size());
-                        headersSize += header2.size();
+                        // Start a new TLS record only once the previous one is fully flushed. The
+                        // record length is committed in the header before send(), so on a partial
+                        // send the remainder MUST continue the same record (no new header) — else
+                        // the on-wire record length would not match its payload and corrupt the
+                        // stream. (This also fixes a latent bug that the old fixed 2878 cap mostly
+                        // hid, since small records almost always flushed in one syscall.)
+                        if (tlsRecordRemaining == 0) {
+                            uint32_t recordCap = nextTlsRecordSize();
+                            tlsRecordRemaining = remaining < recordCap ? remaining : recordCap;
+                            static std::string header2 = std::string("\x17\x03\x03", 3);
+                            std::memcpy(tempBuffer->bytes + headersSize, header2.data(), header2.size());
+                            headersSize += header2.size();
+                            tempBuffer->bytes[headersSize] = static_cast<uint8_t>((tlsRecordRemaining >> 8) & 0xff);
+                            tempBuffer->bytes[headersSize + 1] = static_cast<uint8_t>(tlsRecordRemaining & 0xff);
+                            headersSize += 2;
+                        }
+                        uint32_t recordPayload = remaining < tlsRecordRemaining ? remaining : tlsRecordRemaining;
+                        std::memcpy(tempBuffer->bytes + headersSize, buffer->bytes(), recordPayload);
 
-                        tempBuffer->bytes[headersSize] = static_cast<uint8_t>((remaining >> 8) & 0xff);
-                        tempBuffer->bytes[headersSize + 1] = static_cast<uint8_t>(remaining & 0xff);
-                        headersSize += 2;
-
-                        std::memcpy(tempBuffer->bytes + headersSize, buffer->bytes(), remaining);
-
-                        if ((sentLength = send(socketFd, tempBuffer->bytes, headersSize + remaining, 0)) < headersSize) {
+                        if ((sentLength = send(socketFd, tempBuffer->bytes, headersSize + recordPayload, 0)) < (ssize_t) headersSize) {
                             if (LOGS_ENABLED) DEBUG_E("connection(%p) send failed", this);
                             closeSocket(1, -1);
                             return;
@@ -1039,7 +1295,9 @@ void ConnectionSocket::onEvent(uint32_t events) {
                             if (ConnectionsManager::getInstance(instanceNum).delegate != nullptr) {
                                 ConnectionsManager::getInstance(instanceNum).delegate->onBytesSent((int32_t) sentLength, currentNetworkType, instanceNum);
                             }
-                            outgoingByteStream->discard((uint32_t) (sentLength - headersSize));
+                            uint32_t sentPayload = (uint32_t) (sentLength - headersSize);
+                            tlsRecordRemaining -= sentPayload;
+                            outgoingByteStream->discard(sentPayload);
                             adjustWriteOp();
                         }
                     } else {

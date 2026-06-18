@@ -1,39 +1,120 @@
-## Telegram messenger for Android
+# 🛡️ ZaStoGram — Telegram для Android с усиленной маскировкой MTProxy
 
-[Telegram](https://telegram.org) is a messaging app with a focus on speed and security. It’s superfast, simple and free.
-This repo contains the official source code for [Telegram App for Android](https://play.google.com/store/apps/details?id=org.telegram.messenger).
+> Форк официального Telegram для Android, в котором подключение к **MTProxy (FakeTLS)** замаскировано под обычный браузерный HTTPS так, чтобы российский DPI (ТСПУ) не мог его опознать и заблокировать.
 
-## Creating your Telegram Application
+Это **не** новый мессенджер. Это тот же самый официальный Telegram (исходники DrKLO), но с переписанным сетевым слоем, который делает трафик к прокси неотличимым от похода обычного браузера на сайт. Цель одна: **чтобы прокси продолжал работать там, где обычный Telegram уже блокируют.**
 
-We welcome all developers to use our API and source code to create applications on our platform.
-There are several things we require from **all developers** for the moment.
+---
 
-1. [**Obtain your own api_id**](https://core.telegram.org/api/obtaining_api_id) for your application.
-2. Please **do not** use the name Telegram for your app — or make sure your users understand that it is unofficial.
-3. Kindly **do not** use our standard logo (white paper plane in a blue circle) as your app's logo.
-3. Please study our [**security guidelines**](https://core.telegram.org/mtproto/security_guidelines) and take good care of your users' data and privacy.
-4. Please remember to publish **your** code too in order to comply with the licences.
+## 📖 Простыми словами (если ты новичок)
 
-### API, Protocol documentation
+Чтобы понять, что тут происходит, хватит четырёх слов:
 
-Telegram API manuals: https://core.telegram.org/api
+- **MTProxy** — прокси-сервер для Telegram. Помогает заходить в Telegram, когда его блокируют.
+- **FakeTLS** — режим прокси, при котором трафик Telegram прикидывается обычным HTTPS-сайтом (как будто ты открыл `google.com`).
+- **DPI / ТСПУ** — оборудование у провайдера, которое «просматривает» трафик и решает, что блокировать. ТСПУ — это российское название такого оборудования.
+- **JA4 (отпечаток)** — «почерк» программы в момент установки HTTPS-соединения. По нему DPI понимает: «это не браузер, это Telegram» — и блокирует.
 
-MTproto protocol manuals: https://core.telegram.org/mtproto
+> 🕵️ **Аналогия.** На входе стоит охранник (ТСПУ). Он не вскрывает чемоданы (шифрование взломать нельзя), а узнаёт «своих» по **визитке** (отпечаток JA4) и по **поведению** (много одинаковых звонков подряд на один адрес). Обычный Telegram всегда показывает одну и ту же узнаваемую визитку — охранник её выучил. **ZaStoGram печатает себе свежую визитку настоящего браузера и ведёт себя как браузер.**
 
-### Compilation Guide
+Блокировка (по наблюдениям сообщества, лето 2026) включается, когда совпадают **три** условия сразу:
+1. **отпечаток JA4** = «телеграмный»;
+2. **одинаковый SNI** (имя домена) у пачки соединений;
+3. **залп** — много соединений почти одновременно на один `ip:порт`.
 
-**Note**: In order to support [reproducible builds](https://core.telegram.org/reproducible-builds), this repo contains dummy release.keystore,  google-services.json and filled variables inside BuildVars.java. Before publishing your own APKs please make sure to replace all these files with your own.
+Сломаешь хотя бы одно — блокировка не срабатывает. ZaStoGram бьёт по **первому** (меняет и чередует JA4) и **третьему** (размывает залп таймингом).
 
-You will require Android Studio 3.4, Android NDK rev. 20 and Android SDK 8.1
+---
 
-1. Download the Telegram source code from https://github.com/DrKLO/Telegram ( git clone https://github.com/DrKLO/Telegram.git )
-2. Copy your release.keystore into TMessagesProj/config
-3. Fill out RELEASE_KEY_PASSWORD, RELEASE_KEY_ALIAS, RELEASE_STORE_PASSWORD in gradle.properties to access your  release.keystore
-4.  Go to https://console.firebase.google.com/, create two android apps with application IDs org.telegram.messenger and org.telegram.messenger.beta, turn on firebase messaging and download google-services.json, which should be copied to the same folder as TMessagesProj.
-5. Open the project in the Studio (note that it should be opened, NOT imported).
-6. Fill out values in TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java – there’s a link for each of the variables showing where and which data to obtain.
-7. You are ready to compile Telegram.
+## ✨ Что улучшено (полный список)
 
-### Localization
+### 1. Свежий браузерный отпечаток вместо «телеграмного»
+Вместо устаревшего узнаваемого ClientHello отправляется **реалистичный браузерный** (Firefox-подобный, с GREASE, TLS 1.3, ALPN `h2`).
 
-We moved all translations to https://translations.telegram.org/en/android/. Please use it.
+### 2. Реестр профилей — несколько разных JA4
+Зашит не один отпечаток, а **набор профилей реальных браузеров** (сейчас — Firefox и пост-квантовый Chrome с `X25519MLKEM768`). При запуске приложение **стабильно выбирает один** профиль на всю сессию (настоящий браузер не меняет почерк между соединениями), а **разные установки выбирают разные** профили. Итог: отпечаток форка — не один общий маркер на всех, а разнообразие по пользователям. Добавить новый браузер = одна ветка в коде (но только из реального перехвата трафика — выдуманный JA4 хуже одного правильного).
+
+### 3. Криптостойкая случайность (CSPRNG)
+Всё, что видно цензору на проводе (порядок TLS-расширений, длина ECH, паддинг, тайминги), теперь берётся из **криптостойкого генератора** (`RAND_bytes` + rejection sampling без modulo-смещения), а не из предсказуемого `rand()`.
+
+### 4. Динамический размер TLS-записей (DRS)
+Раньше исходящие TLS-записи резались по **фиксированному размеру 2878 байт** — это сам по себе отпечаток. Теперь размер выбирается по **фазовой модели реального браузера**: медленный старт (~1200–1700) → разгон (~1400–2600) → устойчивый режим (2400–12288), со сбросом после простоя и защитой от повторов и «лесенок».
+
+### 5. Случайный паддинг ClientHello
+Фиксированный «магический» размер 513 байт заменён на **случайную цель** — убирает классический 517-байтный отпечаток legacy-FakeTLS.
+
+### 6. Джиттер подключений с «тяжёлым хвостом»
+Чтобы не было **залпа** одинаковых подключений к прокси: при частых переподключениях добавляется задержка. Вместо механических «ровно 500–1000 мс» теперь реалистичное распределение — большинство переподключений быстрые, отдельные длиннее.
+
+### 7. GREASE обновляется на каждое соединение
+Раньше GREASE-байты были одинаковыми у всех соединений (статичный след). Теперь они свежие каждый раз (на сам JA4 не влияет — убирает лишний артефакт на проводе).
+
+### 8. Ленивое push-соединение
+Push-соединение создаётся не «залпом» на старте, а лениво — меньше одновременных подключений, меньше похоже на залп.
+
+### 🐞 Попутно исправлены два бага в сетевом коде
+- **Порча TLS-потока при частичной отправке.** Длина TLS-записи писалась в заголовок до `send()`; если ОС отправляла запись не целиком, остаток уходил новой записью с новым заголовком → длина на проводе не совпадала с данными → разрыв. Переписано на **корректную дорезку** (остаток досылается без нового заголовка).
+- **Неверная обработка ошибки `send()`** (сравнение знакового результата с беззнаковым размером) — теперь ошибка отправки корректно приводит к переподключению, а не к повреждению буфера.
+
+---
+
+## 🔧 Сборка (нужно сделать самому — готового APK нет)
+
+> Готового бинарника намеренно нет: ты собираешь приложение из исходников, поэтому подменить там нечего. Это и есть главная защита от троянизации.
+
+1. Получи `api_id` и `api_hash` на [my.telegram.org](https://my.telegram.org) и впиши их в `TMessagesProj/src/main/java/.../BuildVars.java`.
+2. Подставь свой `release.keystore` (вложенный — это заглушка официального Telegram для воспроизводимых сборок).
+3. Собери:
+   - **Android Studio** — нужны Android SDK и NDK (нативный код на C++);
+   - **или Docker** — через вложенный `Dockerfile` (он сам прогонит сборку).
+
+---
+
+## 🚀 Как пользоваться
+
+1. Подними свой **MTProxy с FakeTLS** вне зоны блокировки (например `mtg`, `telemt`, или `mtproto.zig`) — у тебя получится секрет вида `ee...` (это и есть FakeTLS-секрет с доменом).
+2. В приложении: **Настройки → Данные и память → Прокси → Добавить прокси → MTProto**, вставь адрес, порт и **`ee`-секрет**.
+3. Именно к `ee`-секрету применяется вся маскировка из этого форка. Без FakeTLS-секрета (`dd`/обычный) маскировки нет.
+
+---
+
+## ⚖️ Что это даёт и чего НЕ даёт (честно)
+
+**Даёт:**
+- свежий браузерный JA4 + чередование профилей между пользователями;
+- размытие «залпа» по времени;
+- реалистичные размеры TLS-записей и тайминги вместо фиксированных;
+- криптостойкую случайность во всём, что видно цензору.
+
+**НЕ даёт (важно понимать):**
+- **Не ротирует SNI** на каждое соединение — имя домена задаётся `ee`-секретом прокси. Хочешь разные SNI — нужны разные секреты/домены.
+- **Не делает полную L7-неотличимость** — после TLS-рукопожатия внутри по-прежнему идёт MTProto, а не настоящий HTTP/2. От очень глубокого L7-анализа это не спасёт.
+- **Не гарантирует обход навсегда** — методы DPI меняются. Это резко повышает шансы, но не «волшебная кнопка».
+
+---
+
+## 🔒 Безопасность и оговорки
+
+- Это **неофициальный форк**. Доверие к нему = доверие к тем, кто правил код. Базой остаётся подлинный официальный Telegram (DrKLO).
+- Собирай **со своими** `api_id`/`api_hash` и своим keystore. Использование чужих ключей или неофициального клиента **Telegram может ограничить или забанить** — это риск на тебе.
+- Своевременность обновлений безопасности зависит от поддержки форка.
+
+---
+
+## 🙏 Основа и благодарности
+
+- [DrKLO/Telegram](https://github.com/DrKLO/Telegram) — официальный исходный код Telegram для Android (база).
+- [tsrman/tg](https://github.com/tsrman/tg) — идея клиентской смены JA4 на Firefox-подобный + джиттер.
+- [telemt/tdlib-obf](https://github.com/telemt/tdlib-obf) — эталонные техники маскировки (DRS, IPT, реестр профилей, ECH-политика), адаптированные здесь под рамки Android-клиента.
+
+---
+
+## 🗺️ Что ещё планируется
+
+- Маршрутно-зависимая политика ECH с «предохранителем» (circuit breaker).
+- IPT — имитация тайминга отдельных пакетов и классификация трафика (handshake/keepalive/bulk/interactive).
+- Дробление ClientHello по TCP-сегментам (MSS-clamp) — чтобы DPI не мог собрать JA4 из первого пакета.
+- Ограничение числа одновременных соединений к одному прокси (ещё сильнее против «залпа»).
+- Неблокирующий джиттер и больше браузерных профилей (из реальных перехватов).
+
+> Маскировка — это гонка, а не финишная черта: профили и параметры нужно периодически освежать.

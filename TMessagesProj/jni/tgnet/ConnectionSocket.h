@@ -79,6 +79,17 @@ private:
     ByteArray *tempBuffer = nullptr;
     size_t bytesRead = 0;
     int8_t tlsState = 0;
+    uint32_t tlsRecordRemaining = 0; // payload bytes still owed for the in-flight TLS record
+
+    // DRS (dynamic record sizing): per-connection state so outgoing TLS application_data
+    // records vary in size like a real browser's congestion ramp instead of a fixed cap.
+    int8_t drsPhase = 0;            // 0 = slow-start, 1 = congestion-open, 2 = steady-state
+    uint32_t drsRecordsInPhase = 0;
+    uint32_t drsBytesInPhase = 0;
+    uint32_t drsLastCap = 0;
+    int8_t drsLastDir = 0;          // +1 grew, -1 shrank, 0 unknown
+    int64_t drsLastWriteTime = 0;
+    uint32_t drsIdleResetMs = 0;
 
     uint8_t proxyAuthState;
 
@@ -86,6 +97,7 @@ private:
     void closeSocket(int32_t reason, int32_t error);
     void openConnectionInternal(bool ipv6);
     void adjustWriteOp();
+    uint32_t nextTlsRecordSize();
 
     friend class EventObject;
     friend class ConnectionsManager;

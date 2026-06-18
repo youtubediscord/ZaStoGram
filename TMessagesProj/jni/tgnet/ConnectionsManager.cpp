@@ -229,7 +229,7 @@ void ConnectionsManager::select() {
             }
             if (LOGS_ENABLED) DEBUG_D("push ping timeout");
         }
-        if (llabs(now - lastPushPingTime) >= nextPingTimeOffset) {
+        if (lastPushPingTime != 0 && llabs(now - lastPushPingTime) >= nextPingTimeOffset) {
             if (LOGS_ENABLED) DEBUG_D("time for push ping");
             lastPushPingTime = now;
             uint8_t offset;
@@ -348,13 +348,6 @@ void *ConnectionsManager::ThreadProc(void *data) {
 #ifdef ANDROID
     javaVm->AttachCurrentThread(&jniEnv[networkManager->instanceNum], nullptr);
 #endif
-    if (networkManager->currentUserId != 0 && networkManager->pushConnectionEnabled) {
-        Datacenter *datacenter = networkManager->getDatacenterWithId(networkManager->currentDatacenterId);
-        if (datacenter != nullptr) {
-            datacenter->createPushConnection()->setSessionId(networkManager->pushSessionId);
-            networkManager->sendPing(datacenter, true);
-        }
-    }
     do {
         networkManager->select();
     } while (!done);
@@ -2018,13 +2011,7 @@ void ConnectionsManager::setUserId(int64_t userId) {
         if (currentUserId != userId && userId != 0) {
             updateDcSettings(0, false, false);
         }
-        if (currentUserId != 0 && pushConnectionEnabled) {
-            Datacenter *datacenter = getDatacenterWithId(currentDatacenterId);
-            if (datacenter != nullptr) {
-                datacenter->createPushConnection()->setSessionId(pushSessionId);
-                sendPing(datacenter, true);
-            }
-        }
+        // Push connection is created lazily via sendPing in select() loop
         if (LOGS_ENABLED) DEBUG_D("set user %lld", userId);
         if (currentUserId != 0 && !waitingLoginRequests.empty()) {
             for (auto iter = waitingLoginRequests.begin(); iter != waitingLoginRequests.end(); iter++) {

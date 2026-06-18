@@ -355,6 +355,7 @@ void Connection::connect() {
     reconnectTimer->stop();
 
     if (LOGS_ENABLED) DEBUG_D("connection(%p, account%u, dc%u, type %d) connecting (%s:%hu)", this, currentDatacenter->instanceNum, currentDatacenter->getDatacenterId(), connectionType, hostAddress.c_str(), hostPort);
+
     generation++;
     firstPacketSent = false;
     if (restOfTheData != nullptr) {
