@@ -97,6 +97,13 @@ jobs:
       - name: Build Standalone universal APK
         env:
           USE_CCACHE: '1'
+          # The NDK is reinstalled every run, so its clang gets a fresh mtime each time.
+          # Hash the compiler by CONTENT (not mtime) so cached objects still hit across runs.
+          CCACHE_COMPILERCHECK: content
+          # Tolerate __DATE__/__TIME__ macros and fresh-checkout header timestamps.
+          CCACHE_SLOPPINESS: time_macros,include_file_mtime,include_file_ctime
+          # Normalize absolute paths under the workspace so the hash is run-independent.
+          CCACHE_BASEDIR: ${{ github.workspace }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
