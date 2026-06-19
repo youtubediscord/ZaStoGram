@@ -118,7 +118,7 @@ public class ConnectionsManager extends BaseController {
     public final static int MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID = 4;
     public final static int MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP = 5;
 
-    private static final int MT_PROXY_TLS_PROFILE_RANDOM_COUNT = 5;
+    private static final int MT_PROXY_TLS_PROFILE_RANDOM_COUNT = 3;
     private static final String MT_PROXY_TLS_PROFILE_PREFS = "mtproxy_tls_profile";
     private static final String MT_PROXY_TLS_PROFILE_SALT = "profile_salt_v1";
     private static final String MT_PROXY_TLS_PROFILE_OVERRIDE = "profile_override";
@@ -993,15 +993,11 @@ public class ConnectionsManager extends BaseController {
 
         int bucket = Math.floorMod(hash, MT_PROXY_TLS_PROFILE_RANDOM_COUNT);
         if (bucket == 0) {
-            return MT_PROXY_TLS_PROFILE_FIREFOX;
-        } else if (bucket == 1) {
             return MT_PROXY_TLS_PROFILE_ANDROID_CHROME;
-        } else if (bucket == 2) {
+        } else if (bucket == 1) {
             return MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID;
-        } else if (bucket == 3) {
-            return MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP;
         }
-        return MT_PROXY_TLS_PROFILE_YANDEX;
+        return MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP;
     }
 
     private static long stableMtProxyTlsHash(long hash, int value) {

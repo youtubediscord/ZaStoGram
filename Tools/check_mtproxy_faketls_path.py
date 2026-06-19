@@ -46,7 +46,14 @@ def main() -> int:
     require("MT_PROXY_TLS_PROFILE_YANDEX" in java, "Java must define the Yandex MTProxy TLS profile")
     require("MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID" in java, "Java must define the Firefox Android MTProxy TLS profile")
     require("MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP" in java, "Java must define the Android OkHttp MTProxy TLS profile")
-    require("MT_PROXY_TLS_PROFILE_RANDOM_COUNT = 5" in java, "sticky MTProxy auto pool must include five profiles")
+    require("MT_PROXY_TLS_PROFILE_RANDOM_COUNT = 3" in java, "sticky MTProxy auto pool must use the three Android profiles")
+    require(
+        re.search(r"if \(bucket == 0\) \{\s*return MT_PROXY_TLS_PROFILE_ANDROID_CHROME;", java)
+        and re.search(r"else if \(bucket == 1\) \{\s*return MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID;", java)
+        and "return MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP;" in java
+        and "return MT_PROXY_TLS_PROFILE_YANDEX;" not in java,
+        "sticky MTProxy auto pool must avoid desktop/Yandex profiles while connection stability is being diagnosed",
+    )
     require(
         "resolveMtProxyTlsProfile" in java
         and "MT_PROXY_TLS_PROFILE_SALT" in java
@@ -264,6 +271,13 @@ def main() -> int:
         and "TLS server hello wait for tail data" in cpp
         and "server_hello_hmac_timeout" in cpp,
         "FakeTLS ServerHello HMAC verification must be TLS-record-aware and tolerate profiled telemt tail records",
+    )
+    require(
+        "MT_PROXY_HANDSHAKE_TIMER_SERVER_HELLO" in cpp
+        and "MT_PROXY_SERVER_HELLO_HMAC_WAIT_MS" in cpp
+        and "markProxyServerHelloHmacTimeoutIfNeeded" in combined
+        and "serverHelloHmacMismatchTime" in combined,
+        "FakeTLS ServerHello HMAC mismatch must have a short timeout independent of the admission queue",
     )
     require(
         "TLS response ChangeCipherSpec skipped" in cpp

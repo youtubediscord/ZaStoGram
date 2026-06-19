@@ -79,6 +79,7 @@ private:
 
     bool tlsHashMismatch = false;
     bool serverHelloHmacMismatchObserved = false;
+    int64_t serverHelloHmacMismatchTime = 0;
     bool tlsBufferSized = true;
     uint8_t tlsBufferRecordType = 0;
     NativeByteBuffer *tlsBuffer = nullptr;
@@ -120,6 +121,7 @@ private:
     void releaseProxyHandshakeAdmission(bool succeeded, const char *reason);
     void markProxyHandshakeClientHelloSent();
     void markProxyHandshakeFreezeIfNeeded();
+    void markProxyServerHelloHmacTimeoutIfNeeded();
     void clearPendingClientHello();
     bool buildPendingClientHello(uint32_t size);
     bool sendPendingClientHello();

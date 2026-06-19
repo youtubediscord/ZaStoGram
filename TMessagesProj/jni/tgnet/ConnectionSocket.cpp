@@ -55,7 +55,9 @@ static constexpr int32_t MT_PROXY_HANDSHAKE_PRIORITY_PROXY_CHECK = 5;
 
 static constexpr int32_t MT_PROXY_HANDSHAKE_TIMER_ADMISSION = 1;
 static constexpr int32_t MT_PROXY_HANDSHAKE_TIMER_FREEZE = 2;
+static constexpr int32_t MT_PROXY_HANDSHAKE_TIMER_SERVER_HELLO = 3;
 static constexpr int64_t MT_PROXY_HANDSHAKE_FREEZE_TIMEOUT_MS = 4500;
+static constexpr int64_t MT_PROXY_SERVER_HELLO_HMAC_WAIT_MS = 900;
 static constexpr bool MT_PROXY_HANDSHAKE_ADMISSION_ENABLED = false;
 static constexpr bool MT_PROXY_HANDSHAKE_FREEZE_COOLDOWN_ENABLED = false;
 static constexpr bool MT_PROXY_HANDSHAKE_CLOSE_ON_FREEZE_ENABLED = true;
@@ -1117,6 +1119,10 @@ void ConnectionSocket::scheduleProxyHandshakeAdmissionTimer(uint32_t delay, int3
                 markProxyHandshakeFreezeIfNeeded();
                 return;
             }
+            if (mode == MT_PROXY_HANDSHAKE_TIMER_SERVER_HELLO) {
+                markProxyServerHelloHmacTimeoutIfNeeded();
+                return;
+            }
             if (mode == MT_PROXY_HANDSHAKE_TIMER_ADMISSION) {
                 bool delayedIpv6 = proxyHandshakeAdmissionIpv6;
                 if (LOGS_ENABLED) DEBUG_D("connection(%p) mtproxy_startup admission_timer_fire generation=%u ready=%d queued=%d active=%d", this, proxyHandshakeAdmissionGeneration, proxyHandshakeAdmissionReady ? 1 : 0, proxyHandshakeAdmissionQueued ? 1 : 0, proxyHandshakeAdmissionActive ? 1 : 0);
@@ -1236,6 +1242,19 @@ void ConnectionSocket::markProxyHandshakeFreezeIfNeeded() {
             if (LOGS_ENABLED) DEBUG_D("connection(%p) mtproxy_startup server_hello_timeout_close elapsed=%ld", this, (long) elapsed);
             closeSocket(1, ETIMEDOUT);
         }
+    }
+}
+
+void ConnectionSocket::markProxyServerHelloHmacTimeoutIfNeeded() {
+    if (!serverHelloHmacMismatchObserved || serverHelloHmacMismatchTime == 0 || proxyAuthState != 11) {
+        return;
+    }
+    int64_t now = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis();
+    int64_t elapsed = now - serverHelloHmacMismatchTime;
+    if (elapsed >= MT_PROXY_SERVER_HELLO_HMAC_WAIT_MS) {
+        tlsHashMismatch = true;
+        if (LOGS_ENABLED) DEBUG_D("connection(%p) mtproxy_startup server_hello_hmac_timeout bytes=%zu elapsed=%ld", this, bytesRead, (long) elapsed);
+        closeSocket(1, ETIMEDOUT);
     }
 }
 
@@ -1603,6 +1622,8 @@ void ConnectionSocket::closeSocket(int32_t reason, int32_t error) {
     tlsState = 0;
     onConnectedSent = false;
     mtproxySocketConnectedLogged = false;
+    serverHelloHmacMismatchObserved = false;
+    serverHelloHmacMismatchTime = 0;
     clearPendingClientHello();
     clearPendingTlsFrame();
     outgoingByteStream->clean();
@@ -1733,11 +1754,16 @@ void ConnectionSocket::onEvent(uint32_t events) {
                         }
                         if (matchedBytes == 0) {
                             serverHelloHmacMismatchObserved = true;
+                            if (serverHelloHmacMismatchTime == 0) {
+                                serverHelloHmacMismatchTime = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis();
+                                scheduleProxyHandshakeAdmissionTimer((uint32_t) MT_PROXY_SERVER_HELLO_HMAC_WAIT_MS, MT_PROXY_HANDSHAKE_TIMER_SERVER_HELLO, proxyHandshakeAdmissionIpv6);
+                            }
                             if (LOGS_ENABLED) DEBUG_D("connection(%p) TLS server hello hmac wait bytes=%zu candidate=%zu", this, newBytesRead, candidateBytes);
                             bytesRead = newBytesRead;
                             return;
                         }
                         serverHelloHmacMismatchObserved = false;
+                        serverHelloHmacMismatchTime = 0;
                         if (LOGS_ENABLED) DEBUG_D("connection(%p) mtproxy_startup server_hello_hmac_ok bytes=%zu len1=%zu len2=%zu flight=%zu extra=%zu", this, matchedBytes, len1, len2, appFlightBytes, newBytesRead - matchedBytes);
                         releaseProxyHandshakeAdmission(true, "server_hello_hmac_ok");
                         tlsState = 1;
@@ -1927,6 +1953,7 @@ void ConnectionSocket::onEvent(uint32_t events) {
                         lastEventTime = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis();
                         tlsHashMismatch = false;
                         serverHelloHmacMismatchObserved = false;
+                        serverHelloHmacMismatchTime = 0;
                         proxyAuthState = 11;
                         const char *profileName = mtProxyTlsProfileName(currentProxyTlsProfile);
                         TlsHello hello = selectMtProxyTlsHello(currentProxyTlsProfile);
