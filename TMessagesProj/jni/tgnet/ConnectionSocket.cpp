@@ -56,6 +56,9 @@ static constexpr int32_t MT_PROXY_HANDSHAKE_PRIORITY_PROXY_CHECK = 5;
 static constexpr int32_t MT_PROXY_HANDSHAKE_TIMER_ADMISSION = 1;
 static constexpr int32_t MT_PROXY_HANDSHAKE_TIMER_FREEZE = 2;
 static constexpr int32_t MT_PROXY_HANDSHAKE_TIMER_SERVER_HELLO = 3;
+static constexpr int32_t MT_PROXY_HANDSHAKE_TIMER_CLIENT_HELLO_FRAGMENT = 4;
+static constexpr int32_t MT_PROXY_CLIENT_HELLO_FRAGMENTATION_OFF = 0;
+static constexpr int32_t MT_PROXY_CLIENT_HELLO_FRAGMENTATION_SOFT = 1;
 static constexpr int64_t MT_PROXY_HANDSHAKE_FREEZE_TIMEOUT_MS = 4500;
 static constexpr int64_t MT_PROXY_SERVER_HELLO_HMAC_WAIT_MS = 900;
 static constexpr bool MT_PROXY_HANDSHAKE_ADMISSION_ENABLED = false;
@@ -961,6 +964,10 @@ static int32_t normalizeMtProxyTlsProfile(int32_t profile) {
     return MT_PROXY_TLS_PROFILE_ANDROID_CHROME;
 }
 
+static int32_t normalizeMtProxyClientHelloFragmentation(int32_t mode) {
+    return mode == MT_PROXY_CLIENT_HELLO_FRAGMENTATION_SOFT ? MT_PROXY_CLIENT_HELLO_FRAGMENTATION_SOFT : MT_PROXY_CLIENT_HELLO_FRAGMENTATION_OFF;
+}
+
 static const char *mtProxyTlsProfileName(int32_t profile) {
     switch (normalizeMtProxyTlsProfile(profile)) {
         case MT_PROXY_TLS_PROFILE_FIREFOX:
@@ -1176,6 +1183,10 @@ void ConnectionSocket::scheduleProxyHandshakeAdmissionTimer(uint32_t delay, int3
                 markProxyServerHelloHmacTimeoutIfNeeded();
                 return;
             }
+            if (mode == MT_PROXY_HANDSHAKE_TIMER_CLIENT_HELLO_FRAGMENT) {
+                adjustWriteOp();
+                return;
+            }
             if (mode == MT_PROXY_HANDSHAKE_TIMER_ADMISSION) {
                 bool delayedIpv6 = proxyHandshakeAdmissionIpv6;
                 if (LOGS_ENABLED) DEBUG_D("connection(%p) mtproxy_startup admission_timer_fire generation=%u ready=%d queued=%d active=%d", this, proxyHandshakeAdmissionGeneration, proxyHandshakeAdmissionReady ? 1 : 0, proxyHandshakeAdmissionQueued ? 1 : 0, proxyHandshakeAdmissionActive ? 1 : 0);
@@ -1326,6 +1337,10 @@ void ConnectionSocket::clearPendingClientHello() {
     }
     pendingClientHelloSize = 0;
     pendingClientHelloOffset = 0;
+    pendingClientHelloFragmentTarget = 0;
+    pendingClientHelloFragmentIndex = 0;
+    pendingClientHelloFragmentCount = 0;
+    pendingClientHelloNextWriteTime = 0;
 }
 
 bool ConnectionSocket::buildPendingClientHello(uint32_t size) {
@@ -1336,12 +1351,21 @@ bool ConnectionSocket::buildPendingClientHello(uint32_t size) {
     pendingClientHelloOffset = 0;
     pendingClientHello = new ByteArray(size);
     std::memcpy(pendingClientHello->bytes, tempBuffer->bytes, size);
+    if (currentClientHelloFragmentation == MT_PROXY_CLIENT_HELLO_FRAGMENTATION_SOFT && size >= 384) {
+        uint32_t maxFirst = std::min<uint32_t>(768, size - 96);
+        uint32_t minFirst = std::min<uint32_t>(224, maxFirst);
+        uint32_t range = maxFirst > minFirst ? maxFirst - minFirst + 1 : 1;
+        pendingClientHelloFragmentTarget = minFirst + secureRandomBounded(range);
+        pendingClientHelloFragmentCount = 2;
+        pendingClientHelloFragmentIndex = 0;
+        if (LOGS_ENABLED) DEBUG_D("connection(%p) mtproxy_startup client_hello_fragment_plan mode=soft total=%u first=%u fragments=%u", this, size, pendingClientHelloFragmentTarget, pendingClientHelloFragmentCount);
+    }
     return true;
 }
 
-bool ConnectionSocket::sendPendingClientHello() {
-    while (pendingClientHello != nullptr && pendingClientHelloOffset < pendingClientHelloSize) {
-        ssize_t sentLength = send(socketFd, pendingClientHello->bytes + pendingClientHelloOffset, pendingClientHelloSize - pendingClientHelloOffset, 0);
+bool ConnectionSocket::sendPendingClientHelloFragment(uint32_t limit) {
+    while (pendingClientHello != nullptr && pendingClientHelloOffset < limit) {
+        ssize_t sentLength = send(socketFd, pendingClientHello->bytes + pendingClientHelloOffset, limit - pendingClientHelloOffset, 0);
         if (sentLength < 0) {
             int err = errno;
             if (err == EINTR) {
@@ -1363,6 +1387,39 @@ bool ConnectionSocket::sendPendingClientHello() {
         lastEventTime = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis();
         if (pendingClientHelloOffset < pendingClientHelloSize && LOGS_ENABLED) {
             DEBUG_D("connection(%p) mtproxy_startup client_hello_send_progress bytes=%u expected=%u", this, pendingClientHelloOffset, pendingClientHelloSize);
+        }
+    }
+    return true;
+}
+
+bool ConnectionSocket::sendPendingClientHello() {
+    while (pendingClientHello != nullptr && pendingClientHelloOffset < pendingClientHelloSize) {
+        if (pendingClientHelloFragmentTarget > pendingClientHelloOffset && pendingClientHelloFragmentTarget < pendingClientHelloSize) {
+            if (!sendPendingClientHelloFragment(pendingClientHelloFragmentTarget)) {
+                return false;
+            }
+            if (pendingClientHelloOffset < pendingClientHelloFragmentTarget) {
+                return true;
+            }
+            uint32_t delay = 35 + secureRandomBounded(66);
+            pendingClientHelloNextWriteTime = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis() + delay;
+            pendingClientHelloFragmentIndex++;
+            if (LOGS_ENABLED) DEBUG_D("connection(%p) mtproxy_startup client_hello_fragment mode=soft index=%u offset=%u total=%u next_delay=%u", this, pendingClientHelloFragmentIndex, pendingClientHelloOffset, pendingClientHelloSize, delay);
+            pendingClientHelloFragmentTarget = 0;
+            scheduleProxyHandshakeAdmissionTimer(delay, MT_PROXY_HANDSHAKE_TIMER_CLIENT_HELLO_FRAGMENT, proxyHandshakeAdmissionIpv6);
+            return true;
+        }
+
+        if (pendingClientHelloNextWriteTime > 0) {
+            int64_t now = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis();
+            if (now < pendingClientHelloNextWriteTime) {
+                return true;
+            }
+            pendingClientHelloNextWriteTime = 0;
+        }
+
+        if (!sendPendingClientHelloFragment(pendingClientHelloSize)) {
+            return false;
         }
     }
     return true;
@@ -1464,6 +1521,7 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
     currentSecretKind = "none";
     currentSecretIsFakeTls = false;
     currentProxyTlsProfile = normalizeMtProxyTlsProfile(MT_PROXY_TLS_PROFILE_ANDROID_CHROME);
+    currentClientHelloFragmentation = MT_PROXY_CLIENT_HELLO_FRAGMENTATION_OFF;
     proxyCheckDiagnostic = "tcp_not_connected";
     proxyHandshakeAdmissionKey = "";
     tlsState = 0;
@@ -1479,11 +1537,13 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
     std::string *proxySecret = &overrideProxySecret;
     uint16_t proxyPort = overrideProxyPort;
     int32_t proxyTlsProfile = overrideProxyTlsProfile;
+    int32_t proxyClientHelloFragmentation = overrideProxyClientHelloFragmentation;
     if (proxyAddress->empty()) {
         proxyAddress = &ConnectionsManager::getInstance(instanceNum).proxyAddress;
         proxyPort = ConnectionsManager::getInstance(instanceNum).proxyPort;
         proxySecret = &ConnectionsManager::getInstance(instanceNum).proxySecret;
         proxyTlsProfile = ConnectionsManager::getInstance(instanceNum).proxyTlsProfile;
+        proxyClientHelloFragmentation = ConnectionsManager::getInstance(instanceNum).proxyClientHelloFragmentation;
     }
 
     if (!proxyAddress->empty()) {
@@ -1504,6 +1564,7 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
             currentSecretDomain = proxySecret->substr(17);
             currentSecretIsFakeTls = true;
             currentProxyTlsProfile = normalizeMtProxyTlsProfile(proxyTlsProfile);
+            currentClientHelloFragmentation = normalizeMtProxyClientHelloFragmentation(proxyClientHelloFragmentation);
             proxyHandshakeAdmissionKey = *proxyAddress + ":" + std::to_string((unsigned int) proxyPort) + ":" + currentSecretDomain;
             tempBuffLength = 65 * 1024;
         } else {
@@ -1601,6 +1662,7 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
             currentSecretDomain = secret.substr(17);
             currentSecretIsFakeTls = true;
             currentProxyTlsProfile = normalizeMtProxyTlsProfile(ConnectionsManager::getInstance(instanceNum).proxyTlsProfile);
+            currentClientHelloFragmentation = normalizeMtProxyClientHelloFragmentation(ConnectionsManager::getInstance(instanceNum).proxyClientHelloFragmentation);
             proxyHandshakeAdmissionKey = address + ":" + std::to_string((unsigned int) port) + ":" + currentSecretDomain;
             tempBuffLength = 65 * 1024;
         } else {
@@ -1617,7 +1679,7 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
         }
     }
 
-    if (LOGS_ENABLED) DEBUG_D("connection(%p) mtproxy_startup connect_start proxy_state=%d secret_kind=%s is_faketls=%d domain_len=%d profile=%s address=%s port=%u", this, (int) proxyAuthState, currentSecretKind, currentSecretIsFakeTls ? 1 : 0, (int) currentSecretDomain.size(), mtProxyTlsProfileName(currentProxyTlsProfile), currentAddress.c_str(), (unsigned int) currentPort);
+    if (LOGS_ENABLED) DEBUG_D("connection(%p) mtproxy_startup connect_start proxy_state=%d secret_kind=%s is_faketls=%d domain_len=%d profile=%s clienthello_fragment=%d address=%s port=%u", this, (int) proxyAuthState, currentSecretKind, currentSecretIsFakeTls ? 1 : 0, (int) currentSecretDomain.size(), mtProxyTlsProfileName(currentProxyTlsProfile), currentClientHelloFragmentation, currentAddress.c_str(), (unsigned int) currentPort);
     openConnectionInternal(ipv6);
 }
 
@@ -2267,13 +2329,14 @@ void ConnectionSocket::setMtProxyHandshakePriority(int32_t priority) {
     proxyHandshakeAdmissionPriority = priority;
 }
 
-void ConnectionSocket::setOverrideProxy(std::string address, uint16_t port, std::string username, std::string password, std::string secret, int32_t mtProxyTlsProfile) {
+void ConnectionSocket::setOverrideProxy(std::string address, uint16_t port, std::string username, std::string password, std::string secret, int32_t mtProxyTlsProfile, int32_t mtProxyClientHelloFragmentation) {
     overrideProxyAddress = address;
     overrideProxyPort = port;
     overrideProxyUser = username;
     overrideProxyPassword = password;
     overrideProxySecret = secret;
     overrideProxyTlsProfile = normalizeMtProxyTlsProfile(mtProxyTlsProfile);
+    overrideProxyClientHelloFragmentation = normalizeMtProxyClientHelloFragmentation(mtProxyClientHelloFragmentation);
 }
 
 void ConnectionSocket::onHostNameResolved(std::string host, std::string ip, bool ipv6) {

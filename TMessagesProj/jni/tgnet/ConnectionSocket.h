@@ -33,7 +33,7 @@ public:
     time_t getTimeout();
     bool isDisconnected();
     void dropConnection();
-    void setOverrideProxy(std::string address, uint16_t port, std::string username, std::string password, std::string secret, int32_t mtProxyTlsProfile);
+    void setOverrideProxy(std::string address, uint16_t port, std::string username, std::string password, std::string secret, int32_t mtProxyTlsProfile, int32_t mtProxyClientHelloFragmentation);
     void onHostNameResolved(std::string host, std::string ip, bool ipv6);
     void setMtProxyHandshakePriority(int32_t priority);
     const char *getProxyCheckDiagnostic();
@@ -55,6 +55,7 @@ protected:
     std::string overrideProxySecret = "";
     uint16_t overrideProxyPort = 1080;
     int32_t overrideProxyTlsProfile = 0;
+    int32_t overrideProxyClientHelloFragmentation = 0;
 
 private:
     ByteStream *outgoingByteStream = nullptr;
@@ -79,6 +80,7 @@ private:
     const char *currentSecretKind = "none";
     bool currentSecretIsFakeTls = false;
     int32_t currentProxyTlsProfile = 0;
+    int32_t currentClientHelloFragmentation = 0;
     std::string proxyCheckDiagnostic = "tcp_not_connected";
 
     bool tlsHashMismatch = false;
@@ -93,6 +95,10 @@ private:
     size_t bytesRead = 0;
     uint32_t pendingClientHelloSize = 0;
     uint32_t pendingClientHelloOffset = 0;
+    uint32_t pendingClientHelloFragmentTarget = 0;
+    uint32_t pendingClientHelloFragmentIndex = 0;
+    uint32_t pendingClientHelloFragmentCount = 0;
+    int64_t pendingClientHelloNextWriteTime = 0;
     uint32_t pendingTlsFrameSize = 0;
     uint32_t pendingTlsFrameOffset = 0;
     uint32_t pendingTlsPayloadSize = 0;
@@ -128,6 +134,7 @@ private:
     void markProxyServerHelloHmacTimeoutIfNeeded();
     void clearPendingClientHello();
     bool buildPendingClientHello(uint32_t size);
+    bool sendPendingClientHelloFragment(uint32_t limit);
     bool sendPendingClientHello();
     void clearPendingTlsFrame();
     bool buildPendingTlsFrame(NativeByteBuffer *buffer, uint32_t remaining);

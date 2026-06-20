@@ -242,29 +242,29 @@ def main() -> int:
         "Java must choose a sticky profile from endpoint, secret, and local salt",
     )
     require(
-        "native_setProxySettings(currentAccount, proxyAddress, proxyPort, proxyUsername, proxyPassword, proxySecret, mtProxyTlsProfile)" in java
-        and "native_setProxySettings(a, address, port, username, password, secret, mtProxyTlsProfile)" in java,
+        "native_setProxySettings(currentAccount, proxyAddress, proxyPort, proxyUsername, proxyPassword, proxySecret, mtProxyTlsProfile, mtProxyClientHelloFragmentation)" in java
+        and "native_setProxySettings(a, address, port, username, password, secret, mtProxyTlsProfile, mtProxyClientHelloFragmentation)" in java,
         "Java must pass the selected MTProxy TLS profile into native proxy settings",
     )
     require(
-        "native_checkProxy(currentAccount, address, port, username, password, secret, mtProxyTlsProfile, requestTimeDelegate)" in java,
+        "native_checkProxy(currentAccount, address, port, username, password, secret, mtProxyTlsProfile, mtProxyClientHelloFragmentation, requestTimeDelegate)" in java,
         "Java proxy checks must use the same selected MTProxy TLS profile as real connections",
     )
     require(
-        "native_setProxySettings(int currentAccount, String address, int port, String username, String password, String secret, int mtProxyTlsProfile)" in java,
+        "native_setProxySettings(int currentAccount, String address, int port, String username, String password, String secret, int mtProxyTlsProfile, int mtProxyClientHelloFragmentation)" in java,
         "Java native_setProxySettings declaration must include the MTProxy TLS profile",
     )
     require(
-        'native_setProxySettings", "(ILjava/lang/String;ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;I)V"' in wrapper,
+        'native_setProxySettings", "(ILjava/lang/String;ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;II)V"' in wrapper,
         "JNI native_setProxySettings signature must include the MTProxy TLS profile int",
     )
     require(
-        'native_checkProxy", "(ILjava/lang/String;ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;ILorg/telegram/tgnet/RequestTimeDelegate;)J"' in wrapper,
+        'native_checkProxy", "(ILjava/lang/String;ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;IILorg/telegram/tgnet/RequestTimeDelegate;)J"' in wrapper,
         "JNI native_checkProxy signature must include the MTProxy TLS profile int",
     )
     require(
-        "setProxySettings(std::string address, uint16_t port, std::string username, std::string password, std::string secret, int32_t mtProxyTlsProfile)" in manager_header
-        and "ConnectionsManager::setProxySettings(std::string address, uint16_t port, std::string username, std::string password, std::string secret, int32_t mtProxyTlsProfile)" in manager_cpp,
+        "setProxySettings(std::string address, uint16_t port, std::string username, std::string password, std::string secret, int32_t mtProxyTlsProfile, int32_t mtProxyClientHelloFragmentation)" in manager_header
+        and "ConnectionsManager::setProxySettings(std::string address, uint16_t port, std::string username, std::string password, std::string secret, int32_t mtProxyTlsProfile, int32_t mtProxyClientHelloFragmentation)" in manager_cpp,
         "ConnectionsManager::setProxySettings must store the MTProxy TLS profile",
     )
     require(
@@ -279,8 +279,9 @@ def main() -> int:
     )
     require(
         "int32_t mtProxyTlsProfile" in proxy_check_header
-        and "setOverrideProxy(std::string address, uint16_t port, std::string username, std::string password, std::string secret, int32_t mtProxyTlsProfile)" in header
-        and "connection->setOverrideProxy(proxyCheckInfo->address, proxyCheckInfo->port, proxyCheckInfo->username, proxyCheckInfo->password, proxyCheckInfo->secret, proxyCheckInfo->mtProxyTlsProfile)" in manager_cpp,
+        and "int32_t mtProxyClientHelloFragmentation" in proxy_check_header
+        and "setOverrideProxy(std::string address, uint16_t port, std::string username, std::string password, std::string secret, int32_t mtProxyTlsProfile, int32_t mtProxyClientHelloFragmentation)" in header
+        and "connection->setOverrideProxy(proxyCheckInfo->address, proxyCheckInfo->port, proxyCheckInfo->username, proxyCheckInfo->password, proxyCheckInfo->secret, proxyCheckInfo->mtProxyTlsProfile, proxyCheckInfo->mtProxyClientHelloFragmentation)" in manager_cpp,
         "Proxy check override connections must carry the selected MTProxy TLS profile",
     )
     require(

@@ -276,4 +276,14 @@
     <string name="ProxyStatusCancelled">Проверка отменена</string>
     <string name="ProxyStatusUnknownFail">Проверка не прошла: фаза неизвестна</string>
     <string name="UseProxyTelegramInfoStealth">FakeTLS-секреты, которые начинаются с ee, используют браузерный TLS-профиль. Короткие dd/legacy-секреты работают как обычный MTProxy и не используют новую TLS-маскировку.</string>
+    <string name="MtProxyClientHelloFragmentation">Мягкая фрагментация ClientHello</string>
+    <string name="MtProxyClientHelloFragmentationInfo">Делит только FakeTLS ClientHello на небольшие TCP-отправки. MTProto-трафик после подключения не меняется.</string>
+    <string name="MtProxyTlsProfile">JA4 / TLS-профиль</string>
+    <string name="MtProxyTlsProfileInfo">Auto держит один стабильный профиль для конкретного прокси и секрета. Ручной режим принудительно использует один профиль для всех FakeTLS-прокси.</string>
+    <string name="MtProxyTlsProfileAuto">Auto</string>
+    <string name="MtProxyTlsProfileAndroidChrome">Chrome</string>
+    <string name="MtProxyTlsProfileFirefoxAndroid">Ffox A</string>
+    <string name="MtProxyTlsProfileAndroidOkHttp">OkHttp</string>
+    <string name="MtProxyTlsProfileFirefox">Firefox</string>
+    <string name="MtProxyTlsProfileYandex">Yandex</string>
 </resources>
