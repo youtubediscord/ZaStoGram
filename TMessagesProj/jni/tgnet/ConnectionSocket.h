@@ -80,7 +80,9 @@ private:
     const char *currentSecretKind = "none";
     bool currentSecretIsFakeTls = false;
     int32_t currentProxyTlsProfile = 0;
+    int32_t currentEffectiveProxyTlsProfile = 0;
     int32_t currentClientHelloFragmentation = 0;
+    std::string currentProxyTlsProfileKey;
     std::string proxyCheckDiagnostic = "tcp_not_connected";
 
     bool tlsHashMismatch = false;
@@ -129,6 +131,7 @@ private:
     void grantProxyHandshakeAdmission(bool ipv6, uint32_t generation, uint32_t delay, const char *reason);
     void cancelProxyHandshakeAdmission();
     void releaseProxyHandshakeAdmission(bool succeeded, const char *reason);
+    void rotateMtProxyTlsProfileOnFailureIfNeeded(int32_t reason, int32_t error);
     void markProxyHandshakeClientHelloSent();
     void markProxyHandshakeFreezeIfNeeded();
     void markProxyServerHelloHmacTimeoutIfNeeded();

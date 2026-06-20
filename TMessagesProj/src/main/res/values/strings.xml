@@ -10924,8 +10924,9 @@
     <string name="MtProxyClientHelloFragmentation">Soft ClientHello fragmentation</string>
     <string name="MtProxyClientHelloFragmentationInfo">Splits only the FakeTLS ClientHello into small TCP writes. MTProto traffic after connection is not changed.</string>
     <string name="MtProxyTlsProfile">JA4 / TLS profile</string>
-    <string name="MtProxyTlsProfileInfo">Auto keeps one stable profile per proxy and secret. Manual mode forces one profile for all FakeTLS proxies.</string>
+    <string name="MtProxyTlsProfileInfo">Auto keeps one stable profile per proxy and secret. Auto rotate changes the profile only after suspicious FakeTLS failures. Manual mode forces one profile for all FakeTLS proxies.</string>
     <string name="MtProxyTlsProfileAuto">Auto</string>
+    <string name="MtProxyTlsProfileAutoRotate">Auto rotate</string>
     <string name="MtProxyTlsProfileAndroidChrome">Chrome</string>
     <string name="MtProxyTlsProfileFirefoxAndroid">Ffox A</string>
     <string name="MtProxyTlsProfileAndroidOkHttp">OkHttp</string>

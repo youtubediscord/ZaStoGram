@@ -39,11 +39,13 @@
 
 static pthread_mutex_t proxyHandshakeSchedulerMutex = PTHREAD_MUTEX_INITIALIZER;
 
+static constexpr int32_t MT_PROXY_TLS_PROFILE_AUTO = 0;
 static constexpr int32_t MT_PROXY_TLS_PROFILE_FIREFOX = 1;
 static constexpr int32_t MT_PROXY_TLS_PROFILE_ANDROID_CHROME = 2;
 static constexpr int32_t MT_PROXY_TLS_PROFILE_YANDEX = 3;
 static constexpr int32_t MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID = 4;
 static constexpr int32_t MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP = 5;
+static constexpr int32_t MT_PROXY_TLS_PROFILE_AUTO_ROTATE = 6;
 
 static constexpr int32_t MT_PROXY_HANDSHAKE_PRIORITY_BYPASS = -1;
 static constexpr int32_t MT_PROXY_HANDSHAKE_PRIORITY_GENERIC = 0;
@@ -140,6 +142,14 @@ struct MtProxyHandshakeEndpointState {
 };
 
 static std::map<std::string, MtProxyHandshakeEndpointState> proxyHandshakeEndpoints;
+
+struct MtProxyTlsAutoProfileState {
+    int32_t profileIndex = -1;
+    uint32_t failures = 0;
+};
+
+static pthread_mutex_t mtProxyTlsAutoProfilesMutex = PTHREAD_MUTEX_INITIALIZER;
+static std::map<std::string, MtProxyTlsAutoProfileState> mtProxyTlsAutoRotateProfiles;
 
 // Crypto-secure RNG for variable bytes inside the fake TLS profile: extension order and
 // ECH/padding lengths. Transport timing/data-path stays on the tsrman-proven code path.
@@ -958,6 +968,9 @@ private:
 };
 
 static int32_t normalizeMtProxyTlsProfile(int32_t profile) {
+    if (profile == MT_PROXY_TLS_PROFILE_AUTO || profile == MT_PROXY_TLS_PROFILE_AUTO_ROTATE) {
+        return profile;
+    }
     if (profile >= MT_PROXY_TLS_PROFILE_FIREFOX && profile <= MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP) {
         return profile;
     }
@@ -970,6 +983,8 @@ static int32_t normalizeMtProxyClientHelloFragmentation(int32_t mode) {
 
 static const char *mtProxyTlsProfileName(int32_t profile) {
     switch (normalizeMtProxyTlsProfile(profile)) {
+        case MT_PROXY_TLS_PROFILE_AUTO:
+            return "auto";
         case MT_PROXY_TLS_PROFILE_FIREFOX:
             return "firefox";
         case MT_PROXY_TLS_PROFILE_ANDROID_CHROME:
@@ -980,9 +995,93 @@ static const char *mtProxyTlsProfileName(int32_t profile) {
             return "firefox_android";
         case MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP:
             return "android_okhttp";
+        case MT_PROXY_TLS_PROFILE_AUTO_ROTATE:
+            return "auto_rotate";
         default:
             return "android_chrome";
     }
+}
+
+static uint64_t mtProxyTlsAutoRotateSalt() {
+    static uint64_t salt = 0;
+    if (salt == 0) {
+        RAND_bytes((uint8_t *) &salt, sizeof(salt));
+        if (salt == 0) {
+            salt = 0x9e3779b97f4a7c15ULL;
+        }
+    }
+    return salt;
+}
+
+static uint64_t mtProxyTlsProfileHash(uint64_t hash, const std::string &value) {
+    for (char c : value) {
+        hash ^= (uint8_t) c;
+        hash *= 0x100000001b3ULL;
+    }
+    return hash;
+}
+
+static int32_t mtProxyTlsAutoRotatePoolProfile(int32_t index) {
+    static const int32_t profiles[] = {
+            MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID,
+            MT_PROXY_TLS_PROFILE_YANDEX,
+    };
+    int32_t normalizedIndex = index % 2;
+    if (normalizedIndex < 0) {
+        normalizedIndex += 2;
+    }
+    return profiles[normalizedIndex];
+}
+
+static int32_t mtProxyTlsAutoRotateInitialIndex(const std::string &key) {
+    uint64_t hash = 0xcbf29ce484222325ULL ^ mtProxyTlsAutoRotateSalt();
+    hash = mtProxyTlsProfileHash(hash, key);
+    return (int32_t) (hash % 2);
+}
+
+static int32_t resolveMtProxyEffectiveTlsProfile(int32_t profile, const std::string &key) {
+    profile = normalizeMtProxyTlsProfile(profile);
+    if (profile != MT_PROXY_TLS_PROFILE_AUTO_ROTATE) {
+        if (profile == MT_PROXY_TLS_PROFILE_AUTO) {
+            return MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID;
+        }
+        return profile;
+    }
+
+    pthread_mutex_lock(&mtProxyTlsAutoProfilesMutex);
+    MtProxyTlsAutoProfileState &state = mtProxyTlsAutoRotateProfiles[key];
+    if (state.profileIndex < 0) {
+        state.profileIndex = mtProxyTlsAutoRotateInitialIndex(key);
+    }
+    int32_t result = mtProxyTlsAutoRotatePoolProfile(state.profileIndex);
+    pthread_mutex_unlock(&mtProxyTlsAutoProfilesMutex);
+    return result;
+}
+
+static bool mtProxyTlsAutoRotateFailureDiagnostic(const std::string &diagnostic) {
+    if (diagnostic == "tcp_not_connected") {
+        return false; // ClientHello was not sent, so JA4 did not cause this failure.
+    }
+    return diagnostic == "client_hello_sent_no_server_hello"
+           || diagnostic == "server_hello_hmac_mismatch"
+           || diagnostic == "post_handshake_no_appdata"
+           || diagnostic == "tcp_connected_no_pong"
+           || diagnostic == "peer_closed_after_client_hello"
+           || diagnostic == "dropped_after_appdata";
+}
+
+static void mtProxyRotateTlsProfileOnFailure(const std::string &key, const std::string &diagnostic, int32_t previousProfile) {
+    pthread_mutex_lock(&mtProxyTlsAutoProfilesMutex);
+    MtProxyTlsAutoProfileState &state = mtProxyTlsAutoRotateProfiles[key];
+    if (state.profileIndex < 0) {
+        state.profileIndex = mtProxyTlsAutoRotateInitialIndex(key);
+    }
+    state.profileIndex = (state.profileIndex + 1) % 2;
+    state.failures++;
+    uint32_t failures = state.failures;
+    int32_t nextProfile = mtProxyTlsAutoRotatePoolProfile(state.profileIndex);
+    pthread_mutex_unlock(&mtProxyTlsAutoProfilesMutex);
+    if (LOGS_ENABLED) DEBUG_D("mtproxy_startup profile_rotate key=%s phase=%s previous=%s next=%s failures=%u", key.c_str(), diagnostic.c_str(), mtProxyTlsProfileName(previousProfile), mtProxyTlsProfileName(nextProfile), failures);
 }
 
 static TlsHello selectMtProxyTlsHello(int32_t profile) {
@@ -1521,7 +1620,9 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
     currentSecretKind = "none";
     currentSecretIsFakeTls = false;
     currentProxyTlsProfile = normalizeMtProxyTlsProfile(MT_PROXY_TLS_PROFILE_ANDROID_CHROME);
+    currentEffectiveProxyTlsProfile = currentProxyTlsProfile;
     currentClientHelloFragmentation = MT_PROXY_CLIENT_HELLO_FRAGMENTATION_OFF;
+    currentProxyTlsProfileKey = "";
     proxyCheckDiagnostic = "tcp_not_connected";
     proxyHandshakeAdmissionKey = "";
     tlsState = 0;
@@ -1564,6 +1665,8 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
             currentSecretDomain = proxySecret->substr(17);
             currentSecretIsFakeTls = true;
             currentProxyTlsProfile = normalizeMtProxyTlsProfile(proxyTlsProfile);
+            currentProxyTlsProfileKey = *proxyAddress + ":" + std::to_string((unsigned int) proxyPort) + ":" + currentSecretDomain;
+            currentEffectiveProxyTlsProfile = resolveMtProxyEffectiveTlsProfile(currentProxyTlsProfile, currentProxyTlsProfileKey);
             currentClientHelloFragmentation = normalizeMtProxyClientHelloFragmentation(proxyClientHelloFragmentation);
             proxyHandshakeAdmissionKey = *proxyAddress + ":" + std::to_string((unsigned int) proxyPort) + ":" + currentSecretDomain;
             tempBuffLength = 65 * 1024;
@@ -1662,6 +1765,8 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
             currentSecretDomain = secret.substr(17);
             currentSecretIsFakeTls = true;
             currentProxyTlsProfile = normalizeMtProxyTlsProfile(ConnectionsManager::getInstance(instanceNum).proxyTlsProfile);
+            currentProxyTlsProfileKey = address + ":" + std::to_string((unsigned int) port) + ":" + currentSecretDomain;
+            currentEffectiveProxyTlsProfile = resolveMtProxyEffectiveTlsProfile(currentProxyTlsProfile, currentProxyTlsProfileKey);
             currentClientHelloFragmentation = normalizeMtProxyClientHelloFragmentation(ConnectionsManager::getInstance(instanceNum).proxyClientHelloFragmentation);
             proxyHandshakeAdmissionKey = address + ":" + std::to_string((unsigned int) port) + ":" + currentSecretDomain;
             tempBuffLength = 65 * 1024;
@@ -1679,7 +1784,7 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
         }
     }
 
-    if (LOGS_ENABLED) DEBUG_D("connection(%p) mtproxy_startup connect_start proxy_state=%d secret_kind=%s is_faketls=%d domain_len=%d profile=%s clienthello_fragment=%d address=%s port=%u", this, (int) proxyAuthState, currentSecretKind, currentSecretIsFakeTls ? 1 : 0, (int) currentSecretDomain.size(), mtProxyTlsProfileName(currentProxyTlsProfile), currentClientHelloFragmentation, currentAddress.c_str(), (unsigned int) currentPort);
+    if (LOGS_ENABLED) DEBUG_D("connection(%p) mtproxy_startup connect_start proxy_state=%d secret_kind=%s is_faketls=%d domain_len=%d profile=%s effective_profile=%s clienthello_fragment=%d address=%s port=%u", this, (int) proxyAuthState, currentSecretKind, currentSecretIsFakeTls ? 1 : 0, (int) currentSecretDomain.size(), mtProxyTlsProfileName(currentProxyTlsProfile), mtProxyTlsProfileName(currentEffectiveProxyTlsProfile), currentClientHelloFragmentation, currentAddress.c_str(), (unsigned int) currentPort);
     openConnectionInternal(ipv6);
 }
 
@@ -1741,9 +1846,23 @@ int32_t ConnectionSocket::checkSocketError(int32_t *error) {
     return (ret || code) != 0;
 }
 
+void ConnectionSocket::rotateMtProxyTlsProfileOnFailureIfNeeded(int32_t reason, int32_t error) {
+    if (!currentSecretIsFakeTls || currentProxyTlsProfile != MT_PROXY_TLS_PROFILE_AUTO_ROTATE || currentProxyTlsProfileKey.empty()) {
+        return;
+    }
+    if (reason == 0 && error == 0) {
+        return;
+    }
+    if (!mtProxyTlsAutoRotateFailureDiagnostic(proxyCheckDiagnostic)) {
+        return;
+    }
+    mtProxyRotateTlsProfileOnFailure(currentProxyTlsProfileKey, proxyCheckDiagnostic, currentEffectiveProxyTlsProfile);
+}
+
 void ConnectionSocket::closeSocket(int32_t reason, int32_t error) {
     lastEventTime = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis();
     if (LOGS_ENABLED) DEBUG_D("connection(%p) mtproxy_disconnect reason=%d reason_text=%s error=%d error_text=%s secret_kind=%s is_faketls=%d proxy_state=%d tls_state=%d bytes_read=%zu pending_hello=%u/%u pending=%u/%u first_tls_sent=%d first_tls_recv=%d", this, reason, mtProxyDisconnectReasonName(reason), error, mtProxySocketErrorName(error), currentSecretKind, currentSecretIsFakeTls ? 1 : 0, (int) proxyAuthState, (int) tlsState, bytesRead, pendingClientHelloOffset, pendingClientHelloSize, pendingTlsFrameOffset, pendingTlsFrameSize, mtproxyFirstTlsFrameSentLogged ? 1 : 0, mtproxyFirstTlsDataReceivedLogged ? 1 : 0);
+    rotateMtProxyTlsProfileOnFailureIfNeeded(reason, error);
     releaseProxyHandshakeAdmission(false, "closeSocket");
     cancelProxyHandshakeAdmission();
     ConnectionsManager::getInstance(instanceNum).detachConnection(this);
@@ -2097,15 +2216,16 @@ void ConnectionSocket::onEvent(uint32_t events) {
                         serverHelloHmacMismatchObserved = false;
                         serverHelloHmacMismatchTime = 0;
                         proxyAuthState = 11;
-                        const char *profileName = mtProxyTlsProfileName(currentProxyTlsProfile);
-                        TlsHello hello = selectMtProxyTlsHello(currentProxyTlsProfile);
+                        currentEffectiveProxyTlsProfile = resolveMtProxyEffectiveTlsProfile(currentProxyTlsProfile, currentProxyTlsProfileKey);
+                        const char *profileName = mtProxyTlsProfileName(currentEffectiveProxyTlsProfile);
+                        TlsHello hello = selectMtProxyTlsHello(currentEffectiveProxyTlsProfile);
                         hello.setDomain(currentSecretDomain);
                         uint32_t size = hello.writeToBuffer(tempBuffer->bytes);
                         if (!validateServerCompatibleHello(tempBuffer->bytes, size, currentSecretDomain, profileName)) {
                             closeSocket(1, -1);
                             return;
                         }
-                        if (LOGS_ENABLED) DEBUG_D("connection(%p) mtproxy_startup profile selected=%s id=%d hello=%u", this, profileName, (int) normalizeMtProxyTlsProfile(currentProxyTlsProfile), size);
+                        if (LOGS_ENABLED) DEBUG_D("connection(%p) mtproxy_startup profile selected=%s id=%d mode=%s hello=%u", this, profileName, (int) normalizeMtProxyTlsProfile(currentEffectiveProxyTlsProfile), mtProxyTlsProfileName(currentProxyTlsProfile), size);
                         uint32_t outLength;
                         HMAC(EVP_sha256(), currentSecret.data(), currentSecret.size(), tempBuffer->bytes, size, tempBuffer->bytes + 64 * 1024, &outLength);
 

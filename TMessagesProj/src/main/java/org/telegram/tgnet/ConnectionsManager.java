@@ -117,10 +117,11 @@ public class ConnectionsManager extends BaseController {
     public final static int MT_PROXY_TLS_PROFILE_YANDEX = 3;
     public final static int MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID = 4;
     public final static int MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP = 5;
+    public final static int MT_PROXY_TLS_PROFILE_AUTO_ROTATE = 6;
     public final static int MT_PROXY_CLIENT_HELLO_FRAGMENTATION_OFF = 0;
     public final static int MT_PROXY_CLIENT_HELLO_FRAGMENTATION_SOFT = 1;
 
-    private static final int MT_PROXY_TLS_PROFILE_RANDOM_COUNT = 3;
+    private static final int MT_PROXY_TLS_PROFILE_RANDOM_COUNT = 2;
     private static final String MT_PROXY_TLS_PROFILE_PREFS = "mtproxy_tls_profile";
     private static final String MT_PROXY_TLS_PROFILE_SALT = "profile_salt_v1";
     private static final String MT_PROXY_TLS_PROFILE_OVERRIDE = "profile_override";
@@ -692,6 +693,27 @@ public class ConnectionsManager extends BaseController {
         }
     }
 
+    private static boolean isMtProxyActiveForSoftMux() {
+        SharedPreferences preferences = MessagesController.getGlobalMainSettings();
+        return preferences.getBoolean("proxy_enabled", false)
+                && !TextUtils.isEmpty(preferences.getString("proxy_ip", ""))
+                && !TextUtils.isEmpty(preferences.getString("proxy_secret", ""));
+    }
+
+    public static int getMtProxySoftMuxDownloadConnectionType(int requestIndex) {
+        if (isMtProxyActiveForSoftMux()) {
+            return ConnectionTypeDownload;
+        }
+        return (requestIndex & 1) == 0 ? ConnectionTypeDownload : ConnectionTypeDownload2;
+    }
+
+    public static int getMtProxySoftMuxUploadConnectionType(int requestIndex) {
+        if (isMtProxyActiveForSoftMux()) {
+            return ConnectionTypeUpload;
+        }
+        return ConnectionTypeUpload | ((requestIndex % 4) << 16);
+    }
+
     public static void setSystemLangCode(String langCode) {
         langCode = langCode.replace('_', '-').toLowerCase();
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
@@ -991,6 +1013,9 @@ public class ConnectionsManager extends BaseController {
         if (profile == MT_PROXY_TLS_PROFILE_AUTO) {
             return MT_PROXY_TLS_PROFILE_AUTO;
         }
+        if (profile == MT_PROXY_TLS_PROFILE_AUTO_ROTATE) {
+            return MT_PROXY_TLS_PROFILE_AUTO_ROTATE;
+        }
         if (profile >= MT_PROXY_TLS_PROFILE_FIREFOX && profile <= MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP) {
             return profile;
         }
@@ -1031,11 +1056,9 @@ public class ConnectionsManager extends BaseController {
 
         int bucket = Math.floorMod(hash, MT_PROXY_TLS_PROFILE_RANDOM_COUNT);
         if (bucket == 0) {
-            return MT_PROXY_TLS_PROFILE_ANDROID_CHROME;
-        } else if (bucket == 1) {
             return MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID;
         }
-        return MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP;
+        return MT_PROXY_TLS_PROFILE_YANDEX;
     }
 
     private static long stableMtProxyTlsHash(long hash, int value) {

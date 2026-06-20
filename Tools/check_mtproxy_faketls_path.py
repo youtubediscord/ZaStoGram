@@ -227,13 +227,13 @@ def main() -> int:
     require("MT_PROXY_TLS_PROFILE_YANDEX" in java, "Java must define the Yandex MTProxy TLS profile")
     require("MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID" in java, "Java must define the Firefox Android MTProxy TLS profile")
     require("MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP" in java, "Java must define the Android OkHttp MTProxy TLS profile")
-    require("MT_PROXY_TLS_PROFILE_RANDOM_COUNT = 3" in java, "sticky MTProxy auto pool must use the three Android profiles")
+    require("MT_PROXY_TLS_PROFILE_AUTO_ROTATE" in java, "Java must define the auto-rotate MTProxy TLS profile")
+    require("MT_PROXY_TLS_PROFILE_RANDOM_COUNT = 2" in java, "sticky MTProxy auto pool must use the stable two-profile pool")
     require(
-        re.search(r"if \(bucket == 0\) \{\s*return MT_PROXY_TLS_PROFILE_ANDROID_CHROME;", java)
-        and re.search(r"else if \(bucket == 1\) \{\s*return MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID;", java)
-        and "return MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP;" in java
-        and "return MT_PROXY_TLS_PROFILE_YANDEX;" not in java,
-        "sticky MTProxy auto pool must avoid desktop/Yandex profiles while connection stability is being diagnosed",
+        re.search(r"if \(bucket == 0\) \{\s*return MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID;", java)
+        and "return MT_PROXY_TLS_PROFILE_YANDEX;" in java
+        and "return MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP;" not in java,
+        "sticky MTProxy auto pool must avoid Android OkHttp until it is proven stable",
     )
     require(
         "resolveMtProxyTlsProfile" in java
@@ -274,8 +274,9 @@ def main() -> int:
         "ConnectionsManager must keep profile state and reconnect on profile changes",
     )
     require(
-        "mtProxyTlsProfile >= 1 && mtProxyTlsProfile <= 5" in manager_cpp,
-        "Native ConnectionsManager profile normalization must accept the full sticky pool",
+        "mtProxyTlsProfile == 0 || mtProxyTlsProfile == 6" in manager_cpp
+        and "mtProxyTlsProfile >= 1 && mtProxyTlsProfile <= 5" in manager_cpp,
+        "Native ConnectionsManager profile normalization must accept auto, auto-rotate, and the manual profile pool",
     )
     require(
         "int32_t mtProxyTlsProfile" in proxy_check_header
@@ -294,8 +295,9 @@ def main() -> int:
         "FakeTLS must expose Firefox, Android Chrome, Yandex, Firefox Android, and Android OkHttp ClientHello profiles through a selector",
     )
     require(
-        "TlsHello hello = selectMtProxyTlsHello(" in cpp,
-        "FakeTLS handshake must instantiate ClientHello through the sticky profile selector",
+        "currentEffectiveProxyTlsProfile = resolveMtProxyEffectiveTlsProfile" in cpp
+        and "TlsHello hello = selectMtProxyTlsHello(currentEffectiveProxyTlsProfile)" in cpp,
+        "FakeTLS handshake must instantiate ClientHello through the effective sticky/rotating profile selector",
     )
     require(balanced_scopes("getFirefoxDefault", "getDefault"), "Firefox ClientHello scopes must be balanced")
     require(balanced_scopes("getDefault", "getAndroidChromeDefault"), "Android Chrome ClientHello scopes must be balanced")

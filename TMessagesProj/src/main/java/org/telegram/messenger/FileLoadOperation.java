@@ -1440,7 +1440,7 @@ public class FileLoadOperation {
                 }
             }
             for (int i = 0; i < 2; i++) {
-                int connectionType = i == 0 ? ConnectionsManager.ConnectionTypeDownload : ConnectionsManager.ConnectionTypeDownload2;
+                int connectionType = ConnectionsManager.getMtProxySoftMuxDownloadConnectionType(i);
                 if (waitingDownloadSize[i] > 1024 * 1024)  {
                     int datacenterId = isCdn ? cdnDatacenterId : this.datacenterId;
                     ConnectionsManager.getInstance(currentAccount).discardConnection(datacenterId, connectionType);
@@ -2176,7 +2176,7 @@ public class FileLoadOperation {
             }
         }
         for (int i = 0; i < 2; i++) {
-            int connectionType = i == 0 ? ConnectionsManager.ConnectionTypeDownload : ConnectionsManager.ConnectionTypeDownload2;
+            int connectionType = ConnectionsManager.getMtProxySoftMuxDownloadConnectionType(i);
             if (waitingDownloadSize[i] > 512 * 1024 * 2)  {
                 int datacenterId = isCdn ? cdnDatacenterId : this.datacenterId;
                 ConnectionsManager.getInstance(currentAccount).discardConnection(datacenterId, connectionType);
@@ -2366,7 +2366,7 @@ public class FileLoadOperation {
             final TLObject request;
             int connectionType;
             if (useConnectionType == -1) {
-                connectionType = requestsCount % 2 == 0 ? ConnectionsManager.ConnectionTypeDownload : ConnectionsManager.ConnectionTypeDownload2;
+                connectionType = ConnectionsManager.getMtProxySoftMuxDownloadConnectionType(requestsCount);
                 //globalRequestPointer++;
             } else {
                 connectionType = useConnectionType;

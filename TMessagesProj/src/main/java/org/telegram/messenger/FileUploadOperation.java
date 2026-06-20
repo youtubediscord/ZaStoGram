@@ -543,7 +543,7 @@ public class FileUploadOperation {
         if (slowNetwork) {
             connectionType = ConnectionsManager.ConnectionTypeUpload;
         } else {
-            connectionType = ConnectionsManager.ConnectionTypeUpload | ((requestNumFinal % 4) << 16);
+            connectionType = ConnectionsManager.getMtProxySoftMuxUploadConnectionType(requestNumFinal);
         }
         long time = System.currentTimeMillis();
         int[] requestToken = new int[1];

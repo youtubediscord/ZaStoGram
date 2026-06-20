@@ -3483,7 +3483,7 @@ inline std::string decodeSecret(std::string secret) {
 }
 
 static int32_t normalizeMtProxyTlsProfile(int32_t mtProxyTlsProfile) {
-    if (mtProxyTlsProfile >= 1 && mtProxyTlsProfile <= 5) {
+    if (mtProxyTlsProfile == 0 || mtProxyTlsProfile == 6 || (mtProxyTlsProfile >= 1 && mtProxyTlsProfile <= 5)) {
         return mtProxyTlsProfile;
     }
     return 2;

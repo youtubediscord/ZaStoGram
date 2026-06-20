@@ -79,11 +79,12 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
     private static final int MENU_SHARE = 1;
     private static final int[] MT_PROXY_TLS_PROFILE_OPTIONS = new int[] {
             ConnectionsManager.MT_PROXY_TLS_PROFILE_AUTO,
-            ConnectionsManager.MT_PROXY_TLS_PROFILE_ANDROID_CHROME,
+            ConnectionsManager.MT_PROXY_TLS_PROFILE_AUTO_ROTATE,
             ConnectionsManager.MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID,
+            ConnectionsManager.MT_PROXY_TLS_PROFILE_YANDEX,
+            ConnectionsManager.MT_PROXY_TLS_PROFILE_ANDROID_CHROME,
             ConnectionsManager.MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP,
             ConnectionsManager.MT_PROXY_TLS_PROFILE_FIREFOX,
-            ConnectionsManager.MT_PROXY_TLS_PROFILE_YANDEX,
     };
 
     private ListAdapter listAdapter;
@@ -632,11 +633,12 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
     private String[] getMtProxyTlsProfileOptionLabels() {
         return new String[] {
                 getString(R.string.MtProxyTlsProfileAuto),
-                getString(R.string.MtProxyTlsProfileAndroidChrome),
+                getString(R.string.MtProxyTlsProfileAutoRotate),
                 getString(R.string.MtProxyTlsProfileFirefoxAndroid),
+                getString(R.string.MtProxyTlsProfileYandex),
+                getString(R.string.MtProxyTlsProfileAndroidChrome),
                 getString(R.string.MtProxyTlsProfileAndroidOkHttp),
                 getString(R.string.MtProxyTlsProfileFirefox),
-                getString(R.string.MtProxyTlsProfileYandex),
         };
     }
 

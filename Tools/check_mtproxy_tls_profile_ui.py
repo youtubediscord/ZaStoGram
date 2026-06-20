@@ -45,8 +45,9 @@ def main() -> None:
         "tlsProfileRow" in proxy_list
         and "R.string.MtProxyTlsProfile" in proxy_list
         and "R.string.MtProxyTlsProfileAuto" in proxy_list
+        and "R.string.MtProxyTlsProfileAutoRotate" in proxy_list
         and "ConnectionsManager.setMtProxyTlsProfileOverride" in proxy_list,
-        "proxy settings UI must expose Auto/manual JA4 profile selection",
+        "proxy settings UI must expose Auto, Auto rotate, and manual JA4 profile selection",
     )
     require(
         "MT_PROXY_TLS_PROFILE_ANDROID_CHROME" in proxy_list
@@ -64,6 +65,7 @@ def main() -> None:
             "MtProxyTlsProfile",
             "MtProxyTlsProfileInfo",
             "MtProxyTlsProfileAuto",
+            "MtProxyTlsProfileAutoRotate",
             "MtProxyTlsProfileAndroidChrome",
             "MtProxyTlsProfileFirefoxAndroid",
             "MtProxyTlsProfileAndroidOkHttp",
