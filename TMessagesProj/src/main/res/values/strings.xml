@@ -212,7 +212,10 @@
     <string name="ProxyStatusConnectionNotStarted">Proxy connection did not start</string>
     <string name="ProxyStatusConnectingTimeout">Proxy connection timed out</string>
     <string name="ProxyStatusAdmissionTimeout">Proxy connection slot timed out before TCP started</string>
+    <string name="ProxyStatusEndpointCooldownTimeout">Proxy cooldown timed out before TCP started</string>
+    <string name="ProxyStatusDnsCoalesceTimeout">Proxy DNS wait timed out before DNS lookup started</string>
     <string name="ProxyStatusHostResolveFailed">Could not resolve proxy host</string>
+    <string name="ProxyStatusHostResolveTimeout">Proxy DNS lookup timed out</string>
     <string name="ProxyStatusTcpConnectGateTimeout">Timed out before proxy TCP start</string>
     <string name="ProxyStatusTcpNotConnected">TCP did not connect: server or port is unreachable</string>
     <string name="ProxyStatusTcpConnectedNoPong">TCP connected, but MTProxy did not answer</string>
@@ -2716,6 +2719,7 @@
     <string name="DeleteProxyConfirm">Are you sure you want to delete this proxy?</string>
     <string name="DeleteProxyMultiConfirm">Are you sure you want to delete these proxies?</string>
     <string name="UseProxyTitle">Proxy Server</string>
+    <string name="UseProxyLink">Proxy link</string>
     <string name="UseProxySettings">Use Proxy</string>
     <string name="UseProxyAddress">Server</string>
     <string name="UseProxyPassword">Password</string>

@@ -37,7 +37,10 @@ public class ProxyCheckDiagnostics {
     public static final String CONNECTION_NOT_STARTED = "connection_not_started";
     public static final String CONNECTING_TIMEOUT = "connecting_timeout";
     public static final String ADMISSION_TIMEOUT = "admission_timeout";
+    public static final String ENDPOINT_COOLDOWN_TIMEOUT = "endpoint_cooldown_timeout";
+    public static final String DNS_COALESCE_TIMEOUT = "dns_coalesce_timeout";
     public static final String HOST_RESOLVE_FAILED = "host_resolve_failed";
+    public static final String HOST_RESOLVE_TIMEOUT = "host_resolve_timeout";
     public static final String TCP_CONNECT_GATE_TIMEOUT = "tcp_connect_gate_timeout";
     public static final String TCP_NOT_CONNECTED = "tcp_not_connected";
     public static final String TCP_CONNECTED_NO_PONG = "tcp_connected_no_pong";
@@ -82,7 +85,10 @@ public class ProxyCheckDiagnostics {
             case CONNECTION_NOT_STARTED:
             case CONNECTING_TIMEOUT:
             case ADMISSION_TIMEOUT:
+            case ENDPOINT_COOLDOWN_TIMEOUT:
+            case DNS_COALESCE_TIMEOUT:
             case HOST_RESOLVE_FAILED:
+            case HOST_RESOLVE_TIMEOUT:
             case TCP_CONNECT_GATE_TIMEOUT:
             case TCP_NOT_CONNECTED:
             case TCP_CONNECTED_NO_PONG:
@@ -330,8 +336,14 @@ public class ProxyCheckDiagnostics {
                 return title("ProxyStatusConnectingTimeout", R.string.ProxyStatusConnectingTimeout);
             case ADMISSION_TIMEOUT:
                 return title("ProxyStatusAdmissionTimeout", R.string.ProxyStatusAdmissionTimeout);
+            case ENDPOINT_COOLDOWN_TIMEOUT:
+                return title("ProxyStatusEndpointCooldownTimeout", R.string.ProxyStatusEndpointCooldownTimeout);
+            case DNS_COALESCE_TIMEOUT:
+                return title("ProxyStatusDnsCoalesceTimeout", R.string.ProxyStatusDnsCoalesceTimeout);
             case HOST_RESOLVE_FAILED:
                 return title("ProxyStatusHostResolveFailed", R.string.ProxyStatusHostResolveFailed);
+            case HOST_RESOLVE_TIMEOUT:
+                return title("ProxyStatusHostResolveTimeout", R.string.ProxyStatusHostResolveTimeout);
             case TCP_CONNECT_GATE_TIMEOUT:
                 return title("ProxyStatusTcpConnectGateTimeout", R.string.ProxyStatusTcpConnectGateTimeout);
             case TCP_NOT_CONNECTED:
@@ -445,8 +457,14 @@ public class ProxyCheckDiagnostics {
                 return LocaleController.getString(R.string.ProxyStatusConnectingTimeout);
             case ADMISSION_TIMEOUT:
                 return LocaleController.getString(R.string.ProxyStatusAdmissionTimeout);
+            case ENDPOINT_COOLDOWN_TIMEOUT:
+                return LocaleController.getString(R.string.ProxyStatusEndpointCooldownTimeout);
+            case DNS_COALESCE_TIMEOUT:
+                return LocaleController.getString(R.string.ProxyStatusDnsCoalesceTimeout);
             case HOST_RESOLVE_FAILED:
                 return LocaleController.getString(R.string.ProxyStatusHostResolveFailed);
+            case HOST_RESOLVE_TIMEOUT:
+                return LocaleController.getString(R.string.ProxyStatusHostResolveTimeout);
             case TCP_CONNECT_GATE_TIMEOUT:
                 return LocaleController.getString(R.string.ProxyStatusTcpConnectGateTimeout);
             case TCP_NOT_CONNECTED:

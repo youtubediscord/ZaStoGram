@@ -99,6 +99,7 @@ public class ProxySettingsActivity extends BaseFragment {
     private TextSettingsCell pasteCell;
     private ActionBarMenuItem doneItem;
     private RadioCell[] typeCell = new RadioCell[3];
+    private EditTextBoldCursor quickProxyLinkField;
     private int currentType = -1;
     private int initialType = -1;
     private int wssEditorTransportMode = SharedConfig.TRANSPORT_WSS_CUSTOM;
@@ -121,8 +122,19 @@ public class ProxySettingsActivity extends BaseFragment {
     private SharedConfig.ProxyInfo currentProxyInfo;
 
     private boolean ignoreOnTextChange;
+    private boolean ignoreQuickProxyLinkChange;
 
     private static final int done_button = 1;
+
+    private static final class ParsedProxyLink {
+        final int type;
+        final String[] fields;
+
+        ParsedProxyLink(int type, String[] fields) {
+            this.type = type;
+            this.fields = fields;
+        }
+    }
 
     public static class TypeCell extends FrameLayout {
 
@@ -385,6 +397,57 @@ public class ProxySettingsActivity extends BaseFragment {
         linearLayout2.addView(inputFieldsContainer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
 
         inputFields = new EditTextBoldCursor[7];
+        FrameLayout quickLinkContainer = new FrameLayout(context);
+        inputFieldsContainer.addView(quickLinkContainer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 64));
+
+        quickProxyLinkField = new EditTextBoldCursor(context);
+        quickProxyLinkField.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+        quickProxyLinkField.setHintColor(Theme.getColor(Theme.key_windowBackgroundWhiteHintText));
+        quickProxyLinkField.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+        quickProxyLinkField.setBackground(null);
+        quickProxyLinkField.setCursorColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+        quickProxyLinkField.setCursorSize(AndroidUtilities.dp(20));
+        quickProxyLinkField.setCursorWidth(1.5f);
+        quickProxyLinkField.setSingleLine(true);
+        quickProxyLinkField.setGravity((LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT) | Gravity.CENTER_VERTICAL);
+        quickProxyLinkField.setHeaderHintColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueHeader));
+        quickProxyLinkField.setTransformHintToHeader(true);
+        quickProxyLinkField.setLineColors(Theme.getColor(Theme.key_windowBackgroundWhiteInputField), Theme.getColor(Theme.key_windowBackgroundWhiteInputFieldActivated), Theme.getColor(Theme.key_text_RedRegular));
+        quickProxyLinkField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_VARIATION_URI);
+        quickProxyLinkField.setImeOptions(EditorInfo.IME_ACTION_NEXT | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        quickProxyLinkField.setHintText(LocaleController.getString(R.string.UseProxyLink));
+        quickProxyLinkField.setPadding(0, 0, 0, 0);
+        quickProxyLinkField.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                if (ignoreQuickProxyLinkChange) {
+                    return;
+                }
+                ParsedProxyLink parsedProxyLink = parseProxyLink(s.toString());
+                if (parsedProxyLink != null) {
+                    applyParsedProxyLink(parsedProxyLink, true);
+                }
+            }
+        });
+        quickProxyLinkField.setOnEditorActionListener((textView, i, keyEvent) -> {
+            if (i == EditorInfo.IME_ACTION_NEXT) {
+                inputFields[FIELD_IP].requestFocus();
+                return true;
+            }
+            return false;
+        });
+        quickLinkContainer.addView(quickProxyLinkField, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.LEFT | Gravity.TOP, 17, 12, 17, 0));
+
         for (int a = 0; a < inputFields.length; a++) {
             FrameLayout container = new FrameLayout(context);
             inputFieldsContainer.addView(container, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 64));
@@ -551,40 +614,7 @@ public class ProxySettingsActivity extends BaseFragment {
         pasteCell.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4));
         pasteCell.setOnClickListener(v -> {
             if (pasteType != -1) {
-                for (int i = 0; i < pasteFields.length; i++) {
-                    if (pasteType == TYPE_SOCKS5 && i == FIELD_SECRET) {
-                        continue;
-                    }
-                    if (pasteType == TYPE_MTPROTO && (i == FIELD_USER || i == FIELD_PASSWORD)) {
-                        continue;
-                    }
-                    if (pasteFields[i] != null) {
-                        try {
-                            inputFields[i].setText(URLDecoder.decode(pasteFields[i], "UTF-8"));
-                        } catch (UnsupportedEncodingException e) {
-                            inputFields[i].setText(pasteFields[i]);
-                        }
-                    } else {
-                        inputFields[i].setText(null);
-                    }
-                }
-                int focusField = pasteType == TYPE_WSS ? FIELD_WSS_HOST : FIELD_IP;
-                inputFields[focusField].setSelection(inputFields[focusField].length());
-                setProxyType(pasteType, true, () -> {
-                    AndroidUtilities.hideKeyboard(inputFieldsContainer.findFocus());
-                    for (int i = 0; i < pasteFields.length; i++) {
-                        if (pasteType == TYPE_SOCKS5 && i != FIELD_SECRET) {
-                            continue;
-                        }
-                        if (pasteType == TYPE_MTPROTO && i != FIELD_USER && i != FIELD_PASSWORD) {
-                            continue;
-                        }
-                        if (pasteType == TYPE_WSS && (i == FIELD_WSS_HOST || i == FIELD_PORT || i == FIELD_WSS_PATH)) {
-                            continue;
-                        }
-                        inputFields[i].setText(null);
-                    }
-                });
+                applyParsedProxyLink(new ParsedProxyLink(pasteType, pasteFields), true);
             }
         });
         linearLayout2.addView(pasteCell, 0, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
@@ -679,6 +709,112 @@ public class ProxySettingsActivity extends BaseFragment {
         return fragmentView;
     }
 
+    private ParsedProxyLink parseProxyLink(String text) {
+        if (TextUtils.isEmpty(text)) {
+            return null;
+        }
+        String[] params = null;
+        int type = -1;
+
+        final String[] socksStrings = {"t.me/socks?", "tg://socks?"};
+        for (int i = 0; i < socksStrings.length; i++) {
+            final int index = text.indexOf(socksStrings[i]);
+            if (index >= 0) {
+                type = TYPE_SOCKS5;
+                params = text.substring(index + socksStrings[i].length()).split("&");
+                break;
+            }
+        }
+
+        if (params == null) {
+            final String[] proxyStrings = {"t.me/proxy?", "tg://proxy?"};
+            for (int i = 0; i < proxyStrings.length; i++) {
+                final int index = text.indexOf(proxyStrings[i]);
+                if (index >= 0) {
+                    type = TYPE_MTPROTO;
+                    params = text.substring(index + proxyStrings[i].length()).split("&");
+                    break;
+                }
+            }
+        }
+
+        if (params == null) {
+            final String[] wssStrings = {"zastogram://wss?", "tg://wss?"};
+            for (int i = 0; i < wssStrings.length; i++) {
+                final int index = text.indexOf(wssStrings[i]);
+                if (index >= 0) {
+                    type = TYPE_WSS;
+                    params = text.substring(index + wssStrings[i].length()).split("&");
+                    break;
+                }
+            }
+        }
+
+        if (params == null) {
+            return null;
+        }
+
+        String[] fields = new String[inputFields.length];
+        for (int i = 0; i < params.length; i++) {
+            final String[] pair = params[i].split("=", 2);
+            if (pair.length != 2) continue;
+            String value;
+            try {
+                value = URLDecoder.decode(pair[1], "UTF-8");
+            } catch (UnsupportedEncodingException e) {
+                value = pair[1];
+            }
+            switch (pair[0].toLowerCase()) {
+                case "server":
+                    if (type == TYPE_WSS) {
+                        fields[FIELD_WSS_HOST] = value;
+                    } else {
+                        fields[FIELD_IP] = value;
+                    }
+                    break;
+                case "port":
+                    fields[FIELD_PORT] = value;
+                    break;
+                case "user":
+                    if (type == TYPE_SOCKS5) {
+                        fields[FIELD_USER] = value;
+                    }
+                    break;
+                case "pass":
+                    if (type == TYPE_SOCKS5) {
+                        fields[FIELD_PASSWORD] = value;
+                    }
+                    break;
+                case "secret":
+                    if (type == TYPE_MTPROTO) {
+                        fields[FIELD_SECRET] = value;
+                    }
+                    break;
+                case "path":
+                    if (type == TYPE_WSS) {
+                        fields[FIELD_WSS_PATH] = value;
+                    }
+                    break;
+            }
+        }
+
+        return new ParsedProxyLink(type, fields);
+    }
+
+    private void applyParsedProxyLink(ParsedProxyLink parsedProxyLink, boolean animated) {
+        if (parsedProxyLink == null || proxyTypeLocked && parsedProxyLink.type != initialType) {
+            return;
+        }
+        setProxyType(parsedProxyLink.type, animated, () -> AndroidUtilities.hideKeyboard(inputFieldsContainer.findFocus()));
+        for (int i = 0; i < parsedProxyLink.fields.length; i++) {
+            inputFields[i].setText(parsedProxyLink.fields[i]);
+        }
+        int focusField = parsedProxyLink.type == TYPE_WSS ? FIELD_WSS_HOST : FIELD_IP;
+        inputFields[focusField].setSelection(inputFields[focusField].length());
+        AndroidUtilities.hideKeyboard(inputFieldsContainer.findFocus());
+        checkShareDone(animated);
+    }
+
     private void updatePasteCell() {
         final ClipData clip = clipboardManager.getPrimaryClip();
 
@@ -700,81 +836,10 @@ public class ProxySettingsActivity extends BaseFragment {
         pasteType = -1;
         pasteString = clipText;
         pasteFields = new String[inputFields.length];
-        if (clipText != null) {
-            String[] params = null;
-
-            final String[] socksStrings = {"t.me/socks?", "tg://socks?"};
-            for (int i = 0; i < socksStrings.length; i++) {
-                final int index = clipText.indexOf(socksStrings[i]);
-                if (index >= 0) {
-                    pasteType = TYPE_SOCKS5;
-                    params = clipText.substring(index + socksStrings[i].length()).split("&");
-                    break;
-                }
-            }
-
-            if (params == null) {
-                final String[] proxyStrings = {"t.me/proxy?", "tg://proxy?"};
-                for (int i = 0; i < proxyStrings.length; i++) {
-                    final int index = clipText.indexOf(proxyStrings[i]);
-                    if (index >= 0) {
-                        pasteType = TYPE_MTPROTO;
-                        params = clipText.substring(index + proxyStrings[i].length()).split("&");
-                        break;
-                    }
-                }
-            }
-
-            if (params == null) {
-                final String[] wssStrings = {"zastogram://wss?", "tg://wss?"};
-                for (int i = 0; i < wssStrings.length; i++) {
-                    final int index = clipText.indexOf(wssStrings[i]);
-                    if (index >= 0) {
-                        pasteType = TYPE_WSS;
-                        params = clipText.substring(index + wssStrings[i].length()).split("&");
-                        break;
-                    }
-                }
-            }
-
-            if (params != null) {
-                for (int i = 0; i < params.length; i++) {
-                    final String[] pair = params[i].split("=");
-                    if (pair.length != 2) continue;
-                    switch (pair[0].toLowerCase()) {
-                        case "server":
-                            if (pasteType == TYPE_WSS) {
-                                pasteFields[FIELD_WSS_HOST] = pair[1];
-                            } else {
-                                pasteFields[FIELD_IP] = pair[1];
-                            }
-                            break;
-                        case "port":
-                            pasteFields[FIELD_PORT] = pair[1];
-                            break;
-                        case "user":
-                            if (pasteType == TYPE_SOCKS5) {
-                                pasteFields[FIELD_USER] = pair[1];
-                            }
-                            break;
-                        case "pass":
-                            if (pasteType == TYPE_SOCKS5) {
-                                pasteFields[FIELD_PASSWORD] = pair[1];
-                            }
-                            break;
-                        case "secret":
-                            if (pasteType == TYPE_MTPROTO) {
-                                pasteFields[FIELD_SECRET] = pair[1];
-                            }
-                            break;
-                        case "path":
-                            if (pasteType == TYPE_WSS) {
-                                pasteFields[FIELD_WSS_PATH] = pair[1];
-                            }
-                            break;
-                    }
-                }
-            }
+        ParsedProxyLink parsedProxyLink = parseProxyLink(clipText);
+        if (parsedProxyLink != null) {
+            pasteType = parsedProxyLink.type;
+            pasteFields = parsedProxyLink.fields;
         }
 
         if (proxyTypeLocked && pasteType != initialType) {
@@ -911,8 +976,8 @@ public class ProxySettingsActivity extends BaseFragment {
     @Override
     public void onTransitionAnimationEnd(boolean isOpen, boolean backward) {
         if (isOpen && !backward && addingNewProxy) {
-            inputFields[FIELD_IP].requestFocus();
-            AndroidUtilities.showKeyboard(inputFields[FIELD_IP]);
+            quickProxyLinkField.requestFocus();
+            AndroidUtilities.showKeyboard(quickProxyLinkField);
         }
     }
 
@@ -923,6 +988,9 @@ public class ProxySettingsActivity extends BaseFragment {
                 shareCell.setTextColor(shareDoneEnabled ? Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4) : Theme.getColor(Theme.key_windowBackgroundWhiteGrayText2));
             }
             if (inputFields != null) {
+                quickProxyLinkField.setLineColors(Theme.getColor(Theme.key_windowBackgroundWhiteInputField),
+                        Theme.getColor(Theme.key_windowBackgroundWhiteInputFieldActivated),
+                        Theme.getColor(Theme.key_text_RedRegular));
                 for (int i = 0; i < inputFields.length; i++) {
                     inputFields[i].setLineColors(Theme.getColor(Theme.key_windowBackgroundWhiteInputField),
                             Theme.getColor(Theme.key_windowBackgroundWhiteInputFieldActivated),
@@ -940,6 +1008,10 @@ public class ProxySettingsActivity extends BaseFragment {
         arrayList.add(new ThemeDescription(actionBar, ThemeDescription.FLAG_AB_SEARCH, null, null, null, null, Theme.key_actionBarDefaultSearch));
         arrayList.add(new ThemeDescription(actionBar, ThemeDescription.FLAG_AB_SEARCHPLACEHOLDER, null, null, null, null, Theme.key_actionBarDefaultSearchPlaceholder));
         arrayList.add(new ThemeDescription(inputFieldsContainer, ThemeDescription.FLAG_BACKGROUND, null, null, null, null, Theme.key_windowBackgroundWhite));
+        arrayList.add(new ThemeDescription(quickProxyLinkField, ThemeDescription.FLAG_TEXTCOLOR, null, null, null, null, Theme.key_windowBackgroundWhiteBlackText));
+        arrayList.add(new ThemeDescription(quickProxyLinkField, ThemeDescription.FLAG_HINTTEXTCOLOR, null, null, null, null, Theme.key_windowBackgroundWhiteHintText));
+        arrayList.add(new ThemeDescription(quickProxyLinkField, ThemeDescription.FLAG_HINTTEXTCOLOR | ThemeDescription.FLAG_PROGRESSBAR, null, null, null, null, Theme.key_windowBackgroundWhiteBlueHeader));
+        arrayList.add(new ThemeDescription(quickProxyLinkField, ThemeDescription.FLAG_CURSORCOLOR, null, null, null, null, Theme.key_windowBackgroundWhiteBlackText));
         arrayList.add(new ThemeDescription(linearLayout2, 0, new Class[]{View.class}, Theme.dividerPaint, null, null, Theme.key_divider));
 
         arrayList.add(new ThemeDescription(shareCell, ThemeDescription.FLAG_SELECTORWHITE, null, null, null, null, Theme.key_windowBackgroundWhite));

@@ -68,8 +68,8 @@ static uint32_t endpointSecureRandomBounded(uint32_t bound) {
 static int64_t cooldownMs(MtProxyEndpointResilienceState &state, const std::string &diagnostic, int32_t mode, int32_t priority) {
     mode = normalizeMtProxyConnectionPatternOption(mode);
     int32_t penalty = 1;
-    bool networkFailure = diagnostic == "host_resolve_failed" || diagnostic == "tcp_not_connected";
-    if (diagnostic == "host_resolve_failed") {
+    bool networkFailure = diagnostic == "host_resolve_failed" || diagnostic == "host_resolve_timeout" || diagnostic == "tcp_not_connected";
+    if (diagnostic == "host_resolve_failed" || diagnostic == "host_resolve_timeout") {
         penalty = ++state.hostResolveFailures;
         state.tcpFailures = 0;
     } else if (diagnostic == "tcp_not_connected") {
@@ -137,6 +137,7 @@ static bool failureCanBeShadowedBySuccess(const std::string &diagnostic) {
         return false;
     }
     return diagnostic == "host_resolve_failed"
+            || diagnostic == "host_resolve_timeout"
             || diagnostic == "tcp_not_connected"
             || diagnostic == "tcp_connected_no_pong"
             || diagnostic == "client_hello_sent_no_server_hello"
@@ -211,6 +212,7 @@ std::string MtProxyEndpointPolicy::dnsCacheKeyFor(const std::string &host, uint1
 
 std::string MtProxyEndpointPolicy::stateKeyForPhase(const std::string &phase, const std::string &networkEndpointKey, const std::string &endpointKey) {
     if ((phase == "host_resolve_failed"
+            || phase == "host_resolve_timeout"
             || phase == "tcp_not_connected"
             || phase == "tcp_connected_no_pong"
             || phase == "mtproxy_packet_sent_no_response"
@@ -226,6 +228,7 @@ std::string MtProxyEndpointPolicy::stateKeyForPhase(const std::string &phase, co
 
 bool MtProxyEndpointPolicy::failureNeedsCooldown(const std::string &diagnostic) {
     return diagnostic == "host_resolve_failed"
+           || diagnostic == "host_resolve_timeout"
            || diagnostic == "tcp_not_connected"
            || diagnostic == "tcp_connected_no_pong"
            || diagnostic == "client_hello_sent_no_server_hello"
@@ -397,8 +400,23 @@ MtProxyEndpointPolicy::FailureResult MtProxyEndpointPolicy::recordFailure(const 
 }
 
 void MtProxyEndpointPolicy::recordHandshakeOk(const MtProxyEndpointContext &context, const char *reason) {
-    (void) context;
-    (void) reason;
+    if (reason == nullptr || strcmp(reason, "server_hello_hmac_ok") != 0 || context.networkEndpointKey.empty()) {
+        return;
+    }
+    pthread_mutex_lock(&mtProxyEndpointPolicyMutex);
+    auto it = proxyEndpointResilience.find(context.networkEndpointKey);
+    if (it != proxyEndpointResilience.end()) {
+        MtProxyEndpointResilienceState &state = it->second;
+        bool onlyNetworkTransportFailures = state.handshakeFailures == 0
+                && state.plainNoResponseFailures == 0
+                && state.postHandshakeFailures == 0;
+        state.hostResolveFailures = 0;
+        state.tcpFailures = 0;
+        if (onlyNetworkTransportFailures) {
+            state.cooldownUntil = 0;
+        }
+    }
+    pthread_mutex_unlock(&mtProxyEndpointPolicyMutex);
 }
 
 MtProxyEndpointPolicy::DataPathSuccessResult MtProxyEndpointPolicy::recordDataPathSuccess(const MtProxyEndpointContext &context, const char *reason, int64_t now) {

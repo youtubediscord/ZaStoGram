@@ -100,10 +100,15 @@ public final class ProxyPhasePolicy {
                 return failure(KeyScope.NONE, false, false);
 
             case ProxyCheckDiagnostics.ADMISSION_TIMEOUT:
-                return failure(KeyScope.EXACT, true, true);
+            case ProxyCheckDiagnostics.ENDPOINT_COOLDOWN_TIMEOUT:
+                return failure(KeyScope.EXACT, false, false);
+
+            case ProxyCheckDiagnostics.TCP_CONNECT_GATE_TIMEOUT:
+            case ProxyCheckDiagnostics.DNS_COALESCE_TIMEOUT:
+                return failure(KeyScope.NETWORK, false, false);
 
             case ProxyCheckDiagnostics.HOST_RESOLVE_FAILED:
-            case ProxyCheckDiagnostics.TCP_CONNECT_GATE_TIMEOUT:
+            case ProxyCheckDiagnostics.HOST_RESOLVE_TIMEOUT:
             case ProxyCheckDiagnostics.TCP_NOT_CONNECTED:
             case ProxyCheckDiagnostics.TCP_CONNECTED_NO_PONG:
             case ProxyCheckDiagnostics.NETWORK_BLOCK_SUSPECTED:

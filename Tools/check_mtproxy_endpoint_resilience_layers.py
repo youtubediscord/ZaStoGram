@@ -148,7 +148,7 @@ def main():
     )
     require(
         "networkFailure" in cooldown_body
-        and 'diagnostic == "host_resolve_failed" || diagnostic == "tcp_not_connected"' in cooldown_body
+        and 'diagnostic == "host_resolve_failed" || diagnostic == "host_resolve_timeout" || diagnostic == "tcp_not_connected"' in cooldown_body
         and "priority" in cooldown_body
         and "interactiveNetworkFailure" in cooldown_body
         and "MT_PROXY_ENDPOINT_INTERACTIVE_NETWORK_COOLDOWN_MAX_MS" in cooldown_body
@@ -162,8 +162,8 @@ def main():
         "endpoint failure recording must pass connection priority into cooldown calculation and log it",
     )
     require(
-        "recordMtProxyEndpointFailure(proxyCheckDiagnostic.c_str()" in socket,
-        "closeSocket must feed close diagnostics back into endpoint resilience state",
+        "recordMtProxyEndpointFailure(terminalDiagnostic.c_str()" in socket,
+        "closeSocket must feed derived terminal diagnostics back into endpoint resilience state",
     )
     timer_start = socket.find("void ConnectionSocket::scheduleProxyHandshakeAdmissionTimer")
     timer_end = socket.find("void ConnectionSocket::grantProxyHandshakeAdmission", timer_start)
@@ -246,7 +246,7 @@ def main():
     early_drop_idx = close_body.find('proxyCheckDiagnostic = "dropped_early_after_appdata";')
     suppress_idx = close_body.find("bool suppressProxyCloseDiagnostic = false;")
     suppress_late_drop_idx = close_body.find('proxyCheckDiagnostic == "dropped_after_appdata"', suppress_idx)
-    publish_idx = close_body.find("publishProxyConnectionStage(proxyCheckDiagnostic.c_str())")
+    publish_idx = close_body.find("publishProxyConnectionStage(terminalDiagnostic.c_str())")
     require(
         "suppressProxyCloseDiagnostic" in close_body
         and 'proxyCheckDiagnostic == "post_handshake_no_appdata"' in close_body
@@ -265,9 +265,9 @@ def main():
         "closeSocket must publish early post-appdata drops while suppressing only later already-usable post-appdata closes",
     )
     require(
-        "!suppressProxyCloseDiagnostic && reason != 0 && isCurrentMtProxyConnection() && !proxyCheckDiagnostic.empty()" in close_body
-        and "publishProxyConnectionStage(proxyCheckDiagnostic.c_str())" in close_body
-        and "recordMtProxyEndpointFailure(proxyCheckDiagnostic.c_str(), \"closeSocket\")" in close_body,
+        "!suppressProxyCloseDiagnostic && reason != 0 && isCurrentMtProxyConnection() && !terminalDiagnostic.empty()" in close_body
+        and "publishProxyConnectionStage(terminalDiagnostic.c_str())" in close_body
+        and "recordMtProxyEndpointFailure(terminalDiagnostic.c_str(), \"closeSocket\")" in close_body,
         "closeSocket must still publish and record real non-suppressed MTProxy close diagnostics",
     )
     require(
@@ -395,13 +395,13 @@ def main():
     request_body = socket[request_start:request_end]
     no_delegate = request_body.find("manager.delegate == nullptr")
     no_delegate_cache = request_body.find("mtProxyEndpointUseCachedHostAddress(waitingForHostResolve, &cachedIpv6)")
-    no_delegate_failure = request_body.find('proxyCheckDiagnostic = "host_resolve_failed"')
+    no_delegate_not_started = request_body.find('proxyCheckDiagnostic = "connection_not_started"')
     require(
         no_delegate != -1
         and no_delegate_cache != -1
-        and no_delegate_failure != -1
-        and no_delegate < no_delegate_cache < no_delegate_failure,
-        "missing resolver delegate must try last-good-IP cache before publishing host_resolve_failed",
+        and no_delegate_not_started != -1
+        and no_delegate < no_delegate_cache < no_delegate_not_started,
+        "missing resolver delegate must try last-good-IP cache before publishing connection_not_started, not DNS failure",
     )
     resolved_start = socket.find("void ConnectionSocket::onHostNameResolved")
     resolved_end = socket.find("void ConnectionSocket::openConnectionInternal", resolved_start)
@@ -437,6 +437,7 @@ def main():
     require(
         "tcp_not_connected" not in recipe_body
         and "host_resolve_failed" not in recipe_body
+        and "host_resolve_timeout" not in recipe_body
         and "mtproxy_packet_sent_no_response" not in recipe_body
         and "dropped_early_after_appdata" not in recipe_body
         and "peer_closed_after_client_hello" not in recipe_body
@@ -455,6 +456,7 @@ def main():
     )
     require(
         '"host_resolve_failed"' in state_key_body
+        and '"host_resolve_timeout"' in state_key_body
         and '"tcp_not_connected"' in state_key_body
         and '"tcp_connected_no_pong"' in state_key_body
         and '"mtproxy_packet_sent_no_response"' in state_key_body

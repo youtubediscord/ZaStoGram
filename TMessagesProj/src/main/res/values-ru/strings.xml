@@ -294,7 +294,10 @@
     <string name="ProxyStatusConnectionNotStarted">Подключение к прокси не началось</string>
     <string name="ProxyStatusConnectingTimeout">Подключение к прокси не успело завершиться</string>
     <string name="ProxyStatusAdmissionTimeout">Слот подключения к прокси не дождался запуска TCP</string>
+    <string name="ProxyStatusEndpointCooldownTimeout">Пауза прокси истекла до запуска TCP</string>
+    <string name="ProxyStatusDnsCoalesceTimeout">Ожидание DNS-слота истекло до запуска DNS</string>
     <string name="ProxyStatusHostResolveFailed">Не удалось найти адрес прокси</string>
+    <string name="ProxyStatusHostResolveTimeout">DNS-запрос прокси не ответил вовремя</string>
     <string name="ProxyStatusTcpConnectGateTimeout">Не дождались запуска TCP-подключения к прокси</string>
     <string name="ProxyStatusTcpNotConnected">TCP не открылся: сервер или порт недоступен</string>
     <string name="ProxyStatusTcpConnectedNoPong">TCP открылся, но MTProxy не ответил</string>
@@ -311,6 +314,7 @@
     <string name="ProxyWindowStatusNoProxy">Прокси не выбран</string>
     <string name="ProxyWindowStatusReady">Прокси подключён</string>
     <string name="ProxyWindowStatusChecking">Проверяем маршрут прокси...</string>
+    <string name="UseProxyLink">Ссылка на прокси</string>
     <string name="UseProxyTelegramInfoStealth">FakeTLS-секреты, которые начинаются с ee, используют браузерный TLS-профиль. Короткие dd/legacy-секреты работают как обычный MTProxy и не используют новую TLS-маскировку.</string>
     <string name="MtProxyClientHelloFragmentation">Мягкая фрагментация ClientHello</string>
     <string name="MtProxyClientHelloFragmentationInfo">Делит только FakeTLS ClientHello на небольшие TCP-отправки. MTProto-трафик после подключения не меняется.</string>

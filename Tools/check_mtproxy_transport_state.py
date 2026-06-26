@@ -55,6 +55,10 @@ def main() -> int:
     require("bool registered" in machine_header, "ConnectionSocketStateMachine must track successful epoll registration explicitly", failures)
     require("bool adjustWriteAfterPreTcpGate" in machine_header, "ConnectionSocketStateMachine must track writes queued before live epoll", failures)
     require("bool tcpConnectAttemptStarted" in machine_header, "ConnectionSocketStateMachine must track whether a real TCP connect was attempted", failures)
+    require("bool dnsResolveAttemptStarted" in machine_header, "ConnectionSocketStateMachine must track whether delegate DNS was actually started", failures)
+    require("std::string preTcpWaitPhase" in machine_header, "ConnectionSocketStateMachine must track the active local pre-TCP wait phase", failures)
+    require("int64_t preTcpWaitDeadlineMs" in machine_header, "ConnectionSocketStateMachine must track the active local pre-TCP wait deadline", failures)
+    require('std::string proxyCheckDiagnostic = "connection_not_started"' in machine_header, "ConnectionSocketStateMachine diagnostic default must not be tcp_not_connected before socket_connect_start", failures)
     private_start = header.find("private:")
     protected_start = header.find("protected:")
     enum_pos = machine_header.find("enum class LifecycleState")
@@ -107,7 +111,11 @@ def main() -> int:
         "setAdjustWriteOpAfterResolve",
         "setAdjustWriteOpAfterPreTcpGate",
         "setMtProxyTcpConnectAttemptStarted",
+        "setMtProxyDnsResolveAttemptStarted",
+        "setMtProxyPreTcpWaitPhase",
         "classifyMtProxyPreTcpTimeoutDiagnostic",
+        "deriveMtProxyTerminalDiagnostic",
+        "mtProxyDiagnosticIsLocalSchedulerTimeout",
         "queueAdjustWriteOpAfterOutboundAppend",
         "setMtProxySocketConnectedLogged",
         "canStartHostResolve",
@@ -552,12 +560,57 @@ def main() -> int:
         "TCP connect-attempt latch must be centralized and logged through setMtProxyTcpConnectAttemptStarted",
         failures,
     )
-    classify_pre_tcp_body = method_body(socket, "void ConnectionSocket::classifyMtProxyPreTcpTimeoutDiagnostic", "void ConnectionSocket::setMtProxySocketConnectedLogged")
+    dns_started_body = method_body(socket, "void ConnectionSocket::setMtProxyDnsResolveAttemptStarted", "void ConnectionSocket::setMtProxyPreTcpWaitPhase")
+    require(
+        "dnsResolveAttemptStarted = started;" in dns_started_body
+        and "dns_resolve_attempt_started_state_change" in dns_started_body
+        and "transport_state=%s" in dns_started_body
+        and "waiting_resolve=%d" in dns_started_body,
+        "DNS resolve-attempt latch must be centralized and logged through setMtProxyDnsResolveAttemptStarted",
+        failures,
+    )
+    pre_tcp_wait_body = method_body(socket, "void ConnectionSocket::setMtProxyPreTcpWaitPhase", "void ConnectionSocket::classifyMtProxyPreTcpTimeoutDiagnostic")
+    require(
+        "preTcpWaitPhase = phase" in pre_tcp_wait_body
+        and "preTcpWaitDeadlineMs = deadlineMs;" in pre_tcp_wait_body
+        and "pre_tcp_wait_state_change" in pre_tcp_wait_body
+        and "transport_state=%s" in pre_tcp_wait_body,
+        "pre-TCP wait phase/deadline must be centralized and logged through setMtProxyPreTcpWaitPhase",
+        failures,
+    )
+    classify_pre_tcp_body = method_body(socket, "void ConnectionSocket::classifyMtProxyPreTcpTimeoutDiagnostic", "std::string ConnectionSocket::deriveMtProxyTerminalDiagnostic")
     require(
         '"tcp_connect_gate_timeout"' in classify_pre_tcp_body
         and '"admission_timeout"' in classify_pre_tcp_body
+        and '"endpoint_cooldown_timeout"' in classify_pre_tcp_body
+        and '"dns_coalesce_timeout"' in classify_pre_tcp_body
+        and '"host_resolve_timeout"' in classify_pre_tcp_body
+        and '"host_resolve_failed"' not in classify_pre_tcp_body
+        and "preTcpWaitPhase" in classify_pre_tcp_body
+        and "dnsResolveAttemptStarted" in classify_pre_tcp_body
         and "tcpConnectAttemptStarted" in classify_pre_tcp_body,
-        "pre-TCP timeout classifier must publish gate/admission terminal phases before close",
+        "pre-TCP timeout classifier must derive local/DNS timeout phases from milestones, not from pending host alone",
+        failures,
+    )
+    terminal_body = method_body(socket, "std::string ConnectionSocket::deriveMtProxyTerminalDiagnostic", "void ConnectionSocket::setMtProxySocketConnectedLogged")
+    require(
+        "classifyMtProxyPreTcpTimeoutDiagnostic" in terminal_body
+        and '"tcp_not_connected"' in terminal_body
+        and "tcpConnectAttemptStarted" in terminal_body
+        and "mtproxySocketConnectedLogged" in terminal_body
+        and "dnsResolveAttemptStarted" in terminal_body,
+        "closeSocket must derive terminal diagnostics from real DNS/TCP milestones before publishing",
+        failures,
+    )
+    local_phase_body = method_body(socket, "bool ConnectionSocket::mtProxyDiagnosticIsLocalSchedulerTimeout", "void ConnectionSocket::setMtProxySocketConnectedLogged")
+    require(
+        '"connection_not_started"' in local_phase_body
+        and '"admission_timeout"' in local_phase_body
+        and '"tcp_connect_gate_timeout"' in local_phase_body
+        and '"endpoint_cooldown_timeout"' in local_phase_body
+        and '"dns_coalesce_timeout"' in local_phase_body
+        and '"tcp_not_connected"' not in local_phase_body,
+        "native local scheduler timeout helper must exclude real TCP failures",
         failures,
     )
     queue_write_body = method_body(socket, "void ConnectionSocket::queueAdjustWriteOpAfterOutboundAppend", "void ConnectionSocket::adjustWriteOp")
@@ -597,9 +650,39 @@ def main() -> int:
         for line in socket.splitlines()
         if "tcpConnectAttemptStarted =" in line and "==" not in line
     ]
+    direct_dns_started_writes = [
+        line.strip()
+        for line in socket.splitlines()
+        if "dnsResolveAttemptStarted =" in line and "==" not in line
+    ]
+    direct_pre_tcp_phase_writes = [
+        line.strip()
+        for line in socket.splitlines()
+        if line.strip().startswith("preTcpWaitPhase =")
+    ]
+    direct_pre_tcp_deadline_writes = [
+        line.strip()
+        for line in socket.splitlines()
+        if line.strip().startswith("preTcpWaitDeadlineMs =")
+    ]
     require(
         direct_tcp_started_writes == ["tcpConnectAttemptStarted = started;"],
         "TCP connect-attempt latch must be written only by setMtProxyTcpConnectAttemptStarted",
+        failures,
+    )
+    require(
+        direct_dns_started_writes == ["dnsResolveAttemptStarted = started;"],
+        "DNS resolve-attempt latch must be written only by setMtProxyDnsResolveAttemptStarted",
+        failures,
+    )
+    require(
+        direct_pre_tcp_phase_writes == ["preTcpWaitPhase = phase == nullptr ? \"\" : phase;"],
+        "pre-TCP wait phase must be written only by setMtProxyPreTcpWaitPhase",
+        failures,
+    )
+    require(
+        direct_pre_tcp_deadline_writes == ["preTcpWaitDeadlineMs = deadlineMs;"],
+        "pre-TCP wait deadline must be written only by setMtProxyPreTcpWaitPhase",
         failures,
     )
     socket_connected_logged_body = method_body(socket, "void ConnectionSocket::setMtProxySocketConnectedLogged", "bool ConnectionSocket::canStartHostResolve")
@@ -654,9 +737,11 @@ def main() -> int:
     host_resolve_body = method_body(socket, "void ConnectionSocket::requestPendingHostResolve", "void ConnectionSocket::onHostNameResolved")
     require(
         "if (!canStartHostResolve())" in host_resolve_body
+        and 'setMtProxyDnsResolveAttemptStarted(true, "host_resolve_start")' in host_resolve_body
+        and 'setMtProxyPreTcpWaitPhase("host_resolve_start"' in host_resolve_body
         and 'setTransportState(TransportState::WaitingGate, "host_resolve_start")' in host_resolve_body
         and "getHostByName(host, instanceNum, this)" in host_resolve_body,
-        "requestPendingHostResolve must use the transport action policy before delegate host resolve",
+        "requestPendingHostResolve must mark a real DNS start immediately before delegate host resolve",
         failures,
     )
     host_resolve_policy_body = method_body(socket, "bool ConnectionSocket::canStartHostResolve", "void ConnectionSocket::checkHostResolveCallback")
@@ -669,8 +754,9 @@ def main() -> int:
     )
     host_callback_body = method_body(socket, "void ConnectionSocket::onHostNameResolved", "void ConnectionSocket::setTimeout")
     require(
-        'checkHostResolveCallback(host)' in host_callback_body,
-        "onHostNameResolved must run the transport-state callback check",
+        'checkHostResolveCallback(host)' in host_callback_body
+        and 'setMtProxyDnsResolveAttemptStarted(false, "host_resolve_callback")' in host_callback_body,
+        "onHostNameResolved must run the transport-state callback check and clear the DNS attempt latch",
         failures,
     )
     host_callback_policy_body = method_body(socket, "void ConnectionSocket::checkHostResolveCallback", "void ConnectionSocket::clearPendingClientHello")
@@ -891,6 +977,15 @@ def main() -> int:
         "closeSocket must be idempotent and log state before cleanup",
         failures,
     )
+    require(
+        "std::string terminalDiagnostic = deriveMtProxyTerminalDiagnostic(reason, error);" in close_body
+        and "publishProxyConnectionStage(terminalDiagnostic.c_str())" in close_body
+        and 'recordMtProxyEndpointFailure(terminalDiagnostic.c_str(), "closeSocket")' in close_body
+        and "publishProxyConnectionStage(proxyCheckDiagnostic.c_str())" not in close_body
+        and 'recordMtProxyEndpointFailure(proxyCheckDiagnostic.c_str(), "closeSocket")' not in close_body,
+        "closeSocket must publish/record derived terminal diagnostics, not the mutable in-flight proxyCheckDiagnostic",
+        failures,
+    )
     close_policy_body = method_body(socket, "void ConnectionSocket::checkCloseSocketAction", "void ConnectionSocket::checkProxyHandshakeAdmissionRelease")
     require(
         "checkTransportActionRequirements(action)" in close_policy_body,
@@ -907,6 +1002,13 @@ def main() -> int:
     require(
         'checkTransportActionRequirements("close_native_socket")' in close_native_policy_body,
         "native socket close must be checked through the shared action requirements policy",
+        failures,
+    )
+    endpoint_failure_body = method_body(socket, "void ConnectionSocket::recordMtProxyEndpointFailure", "void ConnectionSocket::recordMtProxyEndpointHandshakeOk")
+    require(
+        "mtProxyDiagnosticIsLocalSchedulerTimeout" in endpoint_failure_body
+        and "return;" in endpoint_failure_body,
+        "native endpoint failure accounting must ignore local scheduler timeout phases",
         failures,
     )
     admission_state_body = method_body(socket, "void ConnectionSocket::setProxyHandshakeAdmissionState", "void ConnectionSocket::checkProxyHandshakeAdmissionRelease")

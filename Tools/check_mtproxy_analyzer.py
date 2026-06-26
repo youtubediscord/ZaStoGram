@@ -314,6 +314,79 @@ def main():
         pre_tcp_overlap.verdict() == "pre_tcp_gate_admission_overlap",
         "old logs with TCP gate held while admission queued must be flagged as an architecture overlap, not generic tcp_not_connected",
     )
+    admission_pending_host = Attempt(key="admission-pending-host")
+    admission_pending_host.add(
+        1,
+        "06-20 15:00:02.000 connection(0x19) mtproxy_startup connect_start proxy_state=10 "
+        "secret_kind=ee is_faketls=1 domain_len=17 profile=firefox_android "
+        "connection_pattern=browser address=198.51.100.19 port=443",
+    )
+    admission_pending_host.add(
+        2,
+        "connection(0x19) mtproxy_transport host_resolve_state_change waiting=1 "
+        "reason=host_resolve_pending waiting_resolve=1 host_len=18 transport_state=prepared",
+    )
+    admission_pending_host.add(
+        3,
+        "connection(0x19) mtproxy_startup admission_queue admission_mode=browser "
+        "connection_pattern=browser key=198.51.100.19:443:cdn.example priority=0 active=1 limit=1 queued=1 retry=650",
+    )
+    require(
+        admission_pending_host.verdict() == "admission_timeout",
+        "pending host without real host_resolve_start must stay admission_timeout, not host_resolve_failed/timeout",
+    )
+
+    endpoint_cooldown = Attempt(key="endpoint-cooldown-timeout")
+    endpoint_cooldown.add(
+        1,
+        "06-20 15:00:02.000 connection(0x20) mtproxy_startup connect_start proxy_state=10 "
+        "secret_kind=ee is_faketls=1 domain_len=17 profile=firefox_android "
+        "connection_pattern=browser address=198.51.100.20 port=443",
+    )
+    endpoint_cooldown.add(2, "connection(0x20) mtproxy_startup endpoint_cooldown key=198.51.100.20:443 delay=3500 cooldown_ms=3500")
+    require(
+        endpoint_cooldown.verdict() == "endpoint_cooldown_timeout",
+        "endpoint cooldown wait without socket_connect_start must be endpoint_cooldown_timeout",
+    )
+
+    dns_coalesce = Attempt(key="dns-coalesce-timeout")
+    dns_coalesce.add(
+        1,
+        "06-20 15:00:02.000 connection(0x21) mtproxy_startup connect_start proxy_state=10 "
+        "secret_kind=ee is_faketls=1 domain_len=17 profile=firefox_android "
+        "connection_pattern=browser address=198.51.100.21 port=443",
+    )
+    dns_coalesce.add(2, "connection(0x21) mtproxy_startup dns_coalesce_wait dns_key=198.51.100.21:443 delay=750")
+    require(
+        dns_coalesce.verdict() == "dns_coalesce_timeout",
+        "DNS coalesce wait without socket_connect_start must be dns_coalesce_timeout",
+    )
+
+    host_resolve_timeout = Attempt(key="host-resolve-timeout")
+    host_resolve_timeout.add(
+        1,
+        "06-20 15:00:02.000 connection(0x22) mtproxy_startup connect_start proxy_state=10 "
+        "secret_kind=ee is_faketls=1 domain_len=17 profile=firefox_android "
+        "connection_pattern=browser address=198.51.100.22 port=443",
+    )
+    host_resolve_timeout.add(2, "connection(0x22) mtproxy_startup host_resolve_start host=blocked.example key=198.51.100.22:443:cdn.example")
+    require(
+        host_resolve_timeout.verdict() == "host_resolve_timeout",
+        "real host_resolve_start without callback/socket_connect_start must be host_resolve_timeout",
+    )
+
+    real_tcp_failure = Attempt(key="real-tcp-failure")
+    real_tcp_failure.add(
+        1,
+        "06-20 15:00:02.000 connection(0x23) mtproxy_startup connect_start proxy_state=10 "
+        "secret_kind=ee is_faketls=1 domain_len=17 profile=firefox_android "
+        "connection_pattern=browser address=198.51.100.23 port=443",
+    )
+    real_tcp_failure.add(2, "connection(0x23) mtproxy_startup socket_connect_start ipv6=0 state=10")
+    require(
+        real_tcp_failure.verdict() == "tcp_not_connected",
+        "socket_connect_start without socket_connected must remain tcp_not_connected",
+    )
 
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
         marker_path = Path(handle.name)

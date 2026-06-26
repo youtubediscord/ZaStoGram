@@ -64,8 +64,11 @@ TIME_RE = re.compile(r"^[0-9]{2}-[0-9]{2} ([0-9]{2}):([0-9]{2}):([0-9]{2})\.([0-
 FAKETLS_FAILURE_VERDICTS = {
     "connection_not_started",
     "admission_timeout",
+    "endpoint_cooldown_timeout",
+    "dns_coalesce_timeout",
     "pre_tcp_gate_admission_overlap",
     "host_resolve_failed",
+    "host_resolve_timeout",
     "tcp_connect_gate_timeout",
     "tcp_not_connected",
     "tcp_connected_no_pong",
@@ -241,9 +244,13 @@ class Attempt:
         event_map = {
             "connect_start": "connect_start",
             "host_resolve_start": "host_resolve_start",
+            "host_resolve_not_started": "connection_not_started",
             "host_resolve_failed": "host_resolve_failed",
+            "host_resolve_timeout": "host_resolve_timeout",
             "connection_not_started": "connection_not_started",
             "admission_timeout": "admission_timeout",
+            "endpoint_cooldown_timeout": "endpoint_cooldown_timeout",
+            "dns_coalesce_timeout": "dns_coalesce_timeout",
             "tcp_connect_gate_timeout": "tcp_connect_gate_timeout",
             "tcp_not_connected": "tcp_not_connected",
             "tcp_connected_no_pong": "tcp_connected_no_pong",
@@ -264,6 +271,7 @@ class Attempt:
             "resolved_sslip": "resolved_sslip",
             "phase_adaptive_recipe": "phase_adaptive_recipe",
             "endpoint_failure_shadowed_by_success": "endpoint_failure_shadowed_by_success",
+            "endpoint_failure_skipped_local": "endpoint_failure_skipped_local",
             "endpoint_failure": "endpoint_failure",
             "endpoint_handshake_ok": "endpoint_handshake_ok",
             "endpoint_data_path_success": "endpoint_data_path_success",
@@ -336,6 +344,12 @@ class Attempt:
             return "connected_without_socket_connected_marker"
         if has("host_resolve_failed"):
             return "host_resolve_failed"
+        if has("host_resolve_timeout"):
+            return "host_resolve_timeout"
+        if has("endpoint_cooldown_timeout"):
+            return "endpoint_cooldown_timeout"
+        if has("dns_coalesce_timeout"):
+            return "dns_coalesce_timeout"
         if has("connection_not_started"):
             return "connection_not_started"
         if has("admission_timeout"):
@@ -344,11 +358,17 @@ class Attempt:
             return "tcp_connect_gate_timeout"
         if has("tcp_connect_gate_grant") and has("admission_queue") and not has("socket_connect_start"):
             return "pre_tcp_gate_admission_overlap"
-        if has("tcp_connect_gate") and not has("socket_connect_start"):
-            return "tcp_connect_gate_timeout"
-        if has("admission_queue") and not has("socket_connect_start"):
-            return "admission_timeout"
         if not has("socket_connect_start"):
+            if has("host_resolve_start"):
+                return "host_resolve_timeout"
+            if has("endpoint_cooldown"):
+                return "endpoint_cooldown_timeout"
+            if has("dns_coalesce_wait"):
+                return "dns_coalesce_timeout"
+            if has("tcp_connect_gate"):
+                return "tcp_connect_gate_timeout"
+            if has("admission_queue"):
+                return "admission_timeout"
             return "connection_not_started"
         if not has("socket_connected"):
             return "tcp_not_connected"
@@ -969,8 +989,11 @@ def print_layer_recommendations(attempts: list[Attempt], all_lines: list[str]) -
     print(
         "  "
         f"dns_endpoint_stability host_resolve_failed={verdicts['host_resolve_failed']} "
+        f"host_resolve_timeout={verdicts['host_resolve_timeout']} "
         f"connection_not_started={verdicts['connection_not_started']} "
         f"admission_timeout={verdicts['admission_timeout']} "
+        f"endpoint_cooldown_timeout={verdicts['endpoint_cooldown_timeout']} "
+        f"dns_coalesce_timeout={verdicts['dns_coalesce_timeout']} "
         f"tcp_connect_gate_timeout={verdicts['tcp_connect_gate_timeout']} "
         f"tcp_not_connected={verdicts['tcp_not_connected']} "
         f"proxy_check_tcp_not_connected={proxy_check_phases['tcp_not_connected']} "
@@ -1409,10 +1432,13 @@ def write_csv_reports(attempts: list[Attempt], global_lines: list[str], out_dir:
             "ok",
             "connection_not_started",
             "admission_timeout",
+            "endpoint_cooldown_timeout",
+            "dns_coalesce_timeout",
             "tcp_connect_gate_timeout",
             "tcp_not_connected",
             "tcp_connected_no_pong",
             "host_resolve_failed",
+            "host_resolve_timeout",
             "network_block_suspected",
             "mtproxy_packet_sent_no_response",
             "unknown_fail",
@@ -1583,9 +1609,12 @@ def print_report(attempts: list[Attempt], global_lines: list[str]) -> None:
     print("- connection_not_started: this socket closed before a real TCP connect attempt started.")
     print("- admission_timeout: this socket waited in the MTProxy admission scheduler until timeout; TCP did not start.")
     print("- pre_tcp_gate_admission_overlap: historical source bug where TCP gate was held while admission was still queued.")
+    print("- endpoint_cooldown_timeout: this socket waited in local endpoint cooldown until timeout; TCP did not start.")
+    print("- dns_coalesce_timeout: this socket waited for local DNS coalescing until timeout; DNS did not start.")
     print("- tcp_connect_gate_timeout: this socket waited behind another active TCP connect until timeout; TCP did not start.")
     print("- tcp_not_connected: TCP connect was attempted, but the socket never reached socket_connected.")
     print("- host_resolve_failed: proxy hostname did not resolve; compare DNS/VPN and sslip.io fast-path before blaming JA4.")
+    print("- host_resolve_timeout: proxy DNS lookup started, but no DNS callback arrived before close.")
     print("- endpoint_cooldown: client delayed the next connect for this endpoint after a recent phase-specific failure.")
     print("- tcp_connect_gate: client delayed a duplicate active TCP connect attempt for the same MTProxy endpoint.")
     print("- dns_coalesce_wait: client delayed a duplicate cold DNS resolve for the same proxy host:port.")

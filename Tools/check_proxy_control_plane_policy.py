@@ -46,6 +46,18 @@ def require_not(text: str, needle: str, message: str, failures: list[str]) -> No
         failures.append(message)
 
 
+def phase_return(policy: str, constant: str) -> str:
+    case = f"case ProxyCheckDiagnostics.{constant}:"
+    start = policy.find(case)
+    if start == -1:
+        return ""
+    end = policy.find("return ", start)
+    if end == -1:
+        return ""
+    semicolon = policy.find(";", end)
+    return policy[end:semicolon + 1] if semicolon != -1 else policy[end:]
+
+
 def main() -> int:
     failures: list[str] = []
 
@@ -85,6 +97,20 @@ def main() -> int:
     require(policy, "FIRST_TLS_APP_RECV", "ProxyPhasePolicy must treat first TLS app recv as usable success", failures)
     require(policy, "FIRST_MTPROXY_PACKET_RECV", "ProxyPhasePolicy must treat first MTProxy packet recv as usable success", failures)
     require(policy, "SERVER_HELLO_HMAC_OK", "ProxyPhasePolicy must explicitly classify server hello as handshake only", failures)
+    for phase in (
+        "CONNECTION_NOT_STARTED",
+        "ADMISSION_TIMEOUT",
+        "TCP_CONNECT_GATE_TIMEOUT",
+        "ENDPOINT_COOLDOWN_TIMEOUT",
+        "DNS_COALESCE_TIMEOUT",
+    ):
+        decision = phase_return(policy, phase)
+        if "failure(" not in decision or "false, false" not in decision:
+            failures.append(f"ProxyPhasePolicy must classify local scheduler timeout {phase.lower()} as visible failure without backoff or rotation")
+    for phase in ("HOST_RESOLVE_FAILED", "HOST_RESOLVE_TIMEOUT", "TCP_NOT_CONNECTED"):
+        decision = phase_return(policy, phase)
+        if "failure(" not in decision or "true, true" not in decision:
+            failures.append(f"ProxyPhasePolicy must keep real network phase {phase.lower()} punitive")
 
     for phase in sorted(endpoint_key_phases(ENDPOINT_NETWORK)):
         require(policy, f'case ProxyCheckDiagnostics.{phase.upper()}'.replace("NETWORK_BLOCK_SUSPECTED", "NETWORK_BLOCK_SUSPECTED"), f"ProxyPhasePolicy must assign network key scope for {phase}", failures)

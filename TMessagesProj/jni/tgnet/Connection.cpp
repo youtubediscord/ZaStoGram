@@ -47,8 +47,7 @@ static bool mtProxyDiagnosticNeedsReconnectBackoff(const char *diagnostic) {
         return false;
     }
     return strcmp(diagnostic, "host_resolve_failed") == 0 ||
-           strcmp(diagnostic, "admission_timeout") == 0 ||
-           strcmp(diagnostic, "tcp_connect_gate_timeout") == 0 ||
+           strcmp(diagnostic, "host_resolve_timeout") == 0 ||
            strcmp(diagnostic, "tcp_not_connected") == 0 ||
            strcmp(diagnostic, "tcp_connected_no_pong") == 0 ||
            strcmp(diagnostic, "client_hello_sent_no_server_hello") == 0 ||

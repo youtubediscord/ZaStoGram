@@ -189,8 +189,11 @@ public:
         std::string currentMtProxyEndpointKey;
         std::string currentMtProxyNetworkEndpointKey;
         std::string currentMtProxyDnsCacheKey;
-        std::string proxyCheckDiagnostic = "tcp_not_connected";
+        std::string proxyCheckDiagnostic = "connection_not_started";
         bool tcpConnectAttemptStarted = false;
+        bool dnsResolveAttemptStarted = false;
+        std::string preTcpWaitPhase;
+        int64_t preTcpWaitDeadlineMs = 0;
     };
 
     SocketSubstate socket;
