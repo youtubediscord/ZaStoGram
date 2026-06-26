@@ -1043,6 +1043,7 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
             });
         }
 
+        proxyAddRow = rowCount++;
         if (!proxyList.isEmpty()) {
             proxyStartRow = rowCount;
             rowCount += proxyList.size();
@@ -1051,7 +1052,6 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
             proxyStartRow = -1;
             proxyEndRow = -1;
         }
-        proxyAddRow = rowCount++;
         proxyShadowRow = rowCount++;
         wssSocksUpstreamInfoRow = wssTransportSelected ? rowCount++ : -1;
         if (!wssTransportSelected && (SharedConfig.currentProxy == null || SharedConfig.currentProxy.secret.isEmpty())) {
@@ -1282,7 +1282,7 @@ public class ProxyListActivity extends BaseFragment implements NotificationCente
                     TextSettingsCell textCell = (TextSettingsCell) holder.itemView;
                     textCell.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
                     if (position == proxyAddRow) {
-                        textCell.setText(getString(R.string.AddProxy), deleteAllRow != -1);
+                        textCell.setText(getString(R.string.AddProxy), proxyStartRow != -1);
                     } else if (position == wssCustomGatewayRow) {
                         textCell.setText(wssGatewaySummary(), false);
                     } else if (position == deleteAllRow) {

@@ -83,6 +83,20 @@ if "ConnectionsManager.getInstance(UserConfig.selectedAccount).checkProxy" in an
     sys.exit(1)
 
 failed = []
+proxy_list_text = PROXY_LIST.read_text(encoding="utf-8")
+update_rows_start = proxy_list_text.find("private void updateRows")
+proxy_add_row_index = proxy_list_text.find("proxyAddRow = rowCount++;", update_rows_start)
+proxy_start_row_index = proxy_list_text.find("proxyStartRow = rowCount;", update_rows_start)
+if (
+    update_rows_start == -1
+    or proxy_add_row_index == -1
+    or proxy_start_row_index == -1
+    or proxy_add_row_index > proxy_start_row_index
+):
+    failed.append(
+        f"{PROXY_LIST.relative_to(ROOT)}: Add Proxy row must be assigned before proxyStartRow so it renders above the proxy list"
+    )
+
 for path, needle, message in checks:
     text = path.read_text(encoding="utf-8")
     if needle not in text:
