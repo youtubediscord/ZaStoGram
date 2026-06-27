@@ -13,6 +13,7 @@ ENGINE = MESSENGER / "ProxyRotationEngine.java"
 STORE = MESSENGER / "ProxyRuntimeStateStore.java"
 HEALTH = MESSENGER / "ProxyHealthStore.java"
 STATUS = MESSENGER / "ProxyStatusMirror.java"
+SCHEDULER = MESSENGER / "ProxyCheckScheduler.java"
 CHECK_ALL = ROOT / "Tools/check_mtproxy_all.py"
 RUNTIME_LOG_VERIFIER = ROOT / "Tools/verify_mtproxy_runtime_logs.py"
 
@@ -100,6 +101,8 @@ def run_runtime_rotation_log_checks(failures: list[str]) -> None:
         good_trigger = session / "good_trigger.txt"
         dns_outage_trigger = session / "dns_outage_trigger.txt"
         dns_outage_hold = session / "dns_outage_hold.txt"
+        rotated_away_bad = session / "rotated_away_bad.txt"
+        rotated_away_good = session / "rotated_away_good.txt"
         live_trigger.write_text(
             runtime_log_fixture(
                 "06-25 20:31:31.110 proxy_rotation decision=trigger phase=tcp_connect_gate endpoint=sberbank.dns.army:45631 count=2 required=2"
@@ -139,6 +142,22 @@ def run_runtime_rotation_log_checks(failures: list[str]) -> None:
                 "06-25 20:33:00.200 D/tmessages dns_resolver fallback provider=cloudflare_json_doh host=avito.mosru.v6.rocks reason=UnknownHostException",
                 "06-25 20:33:00.300 D/tmessages dns_resolver provider=chain result=resolve_failed host=avito.mosru.v6.rocks ipv4=0 ipv6=0 source=",
                 "06-25 20:33:00.500 proxy_rotation decision=dns_outage_hold phase=host_resolve_failed endpoint=avito.mosru.v6.rocks:45631 host=avito.mosru.v6.rocks",
+            ),
+            encoding="utf-8",
+        )
+        rotated_away_bad.write_text(
+            runtime_log_fixture(
+                "06-25 20:34:00.000 proxy_rotation decision=waiting_hysteresis phase=client_hello_sent_no_server_hello endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army count=1 required=2",
+                "06-25 20:34:00.900 proxy_rotation decision=trigger phase=client_hello_sent_no_server_hello endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army count=2 required=2",
+                "06-25 20:34:01.050 proxy_control decision=visible_only source=native_stage account=0 phase=endpoint_cooldown endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army",
+            ),
+            encoding="utf-8",
+        )
+        rotated_away_good.write_text(
+            runtime_log_fixture(
+                "06-25 20:34:00.000 proxy_rotation decision=waiting_hysteresis phase=client_hello_sent_no_server_hello endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army count=1 required=2",
+                "06-25 20:34:00.900 proxy_rotation decision=trigger phase=client_hello_sent_no_server_hello endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army count=2 required=2",
+                "06-25 20:34:01.050 proxy_control decision=ignored_rotated_away source=native_stage account=0 phase=endpoint_cooldown endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army",
             ),
             encoding="utf-8",
         )
@@ -208,6 +227,33 @@ def run_runtime_rotation_log_checks(failures: list[str]) -> None:
             dns_outage_hold_result.stderr.strip() or "runtime log verifier must accept dns_outage_hold instead of host_resolve_failed rotation",
             failures,
         )
+        rotated_away_bad_result = subprocess.run(
+            [sys.executable, str(RUNTIME_LOG_VERIFIER), str(rotated_away_bad)],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        require(
+            rotated_away_bad_result.returncode != 0
+            and "rotated-away endpoint telemetry accepted after rotation trigger" in rotated_away_bad_result.stderr,
+            "runtime log verifier must reject visible live telemetry from an endpoint after proxy_rotation trigger",
+            failures,
+        )
+        rotated_away_good_result = subprocess.run(
+            [sys.executable, str(RUNTIME_LOG_VERIFIER), str(rotated_away_good)],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        require(
+            rotated_away_good_result.returncode == 0,
+            rotated_away_good_result.stderr.strip() or "runtime log verifier must accept ignored_rotated_away after proxy_rotation trigger",
+            failures,
+        )
 
 
 def main() -> int:
@@ -217,6 +263,7 @@ def main() -> int:
     store = read(STORE)
     health = read(HEALTH)
     status = read(STATUS)
+    scheduler = read(SCHEDULER)
     connections = read(CONNECTIONS)
     check_all = read(CHECK_ALL)
     policy = read(MESSENGER / "ProxyPhasePolicy.java")
@@ -278,6 +325,21 @@ def main() -> int:
         failures,
     )
     require(
+        "enum EndpointLifecycle" in health
+        and all(state in health for state in ("TESTING", "USABLE", "DEGRADED", "QUARANTINED", "ROTATED_AWAY")),
+        "ProxyHealthStore must model endpoint lifecycle explicitly through testing/usable/degraded/quarantined/rotated-away states",
+        failures,
+    )
+    require(
+        "ROTATED_AWAY_HOLD_MS" in health
+        and "quarantineExactEndpoint" in health
+        and "ignoreEndpointTelemetry" in health
+        and "shouldIgnoreEndpointTelemetry" in health
+        and "clearRotatedAwayTelemetry" in health,
+        "ProxyHealthStore must own quarantine and rotated-away telemetry hold state",
+        failures,
+    )
+    require(
         "PUNITIVE_FAILURES_TO_ROTATE = 2" in health
         and "PUNITIVE_FAILURE_WINDOW_MS = 30 * 1000L" in health
         and "USABLE_SUCCESS_HOLD_MS = 45 * 1000L" in health,
@@ -319,6 +381,37 @@ def main() -> int:
         "public static ProxyHealthStore.EndpointFailureResult markEndpointFailure" in store
         and "EndpointFailureResult.noop" in health,
         "explicit endpoint failures must return a health-store failure result for scheduled rotation attempts",
+        failures,
+    )
+    require(
+        "ProxyHealthStore.shouldIgnoreEndpointTelemetry(event.endpointKey, event.timestamp)" in on_native_stage
+        and "decision=ignored_rotated_away" in on_native_stage,
+        "native stages from rotated-away endpoints must be ignored before they can update visible/backoff state",
+        failures,
+    )
+    require(
+        ordered(
+            should_schedule_fallback,
+            "boolean result = candidate && failure.rotationAllowed;",
+            "ProxyHealthStore.quarantineExactEndpoint(currentProxy, normalized, now);",
+            "ProxyHealthStore.ignoreEndpointTelemetry(endpointKey, now);",
+            "ProxyCheckScheduler.cancelEndpointAttempts(endpointKey);",
+            "decision=trigger",
+        ),
+        "fallback scheduling must quarantine the exact endpoint, ignore its late telemetry, and cancel endpoint checks before logging trigger",
+        failures,
+    )
+    require(
+        "ProxyHealthStore.quarantineExactEndpoint(proxyInfo, normalized, now)" in mark_endpoint_failure
+        and "ProxyHealthStore.ignoreEndpointTelemetry(ProxyEndpointKey.liveStage(proxyInfo), now)" in mark_endpoint_failure,
+        "scheduled explicit rotation failures must quarantine and ignore the rotated-away endpoint too",
+        failures,
+    )
+    require(
+        "public static int cancelEndpointAttempts(String endpointKey)" in scheduler
+        and "ConnectionsManager.getInstance(request.currentAccount).cancelProxyCheck" in scheduler
+        and "ProxyEndpointKey.matchesTelemetryEndpointKey" in scheduler,
+        "ProxyCheckScheduler must cancel queued and active checks for a rotated-away endpoint",
         failures,
     )
     require(

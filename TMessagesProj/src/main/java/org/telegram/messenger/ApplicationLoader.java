@@ -291,6 +291,13 @@ public class ApplicationLoader extends Application {
 
         ZaStoPrivacy.load();
 
+        // ZaStoGram plugin engine: start CPython + load enabled .plugin files (off the main thread).
+        try {
+            org.telegram.plugins.PluginsController.getInstance().init(applicationContext);
+        } catch (Throwable t) {
+            FileLog.e(t);
+        }
+
         if (BuildVars.LOGS_ENABLED) {
             FileLog.cleanupLogs();
             FileLog.d("app start time = " + (startTime = SystemClock.elapsedRealtime()));

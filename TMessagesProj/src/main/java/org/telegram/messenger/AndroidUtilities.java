@@ -4712,63 +4712,54 @@ public class AndroidUtilities {
         statusTextView[0].setDisablePaddingsOffsetY(true);
         statusTextView[0].setPadding(dp(12.66f), dp(9.33f), dp(12.66f), dp(9.33f));
         final boolean[] checking = new boolean[1];
+        final int[] checkState = {0}; // ZaStoGram: 0 = проверяется/неизвестно, 1 = работает, -1 = не работает
         final Object proxyCheckOwner = new Object();
         final Runnable setProxyCheckFailedStatus = () -> {
+            checkState[0] = -1;
             statusTextView[0].setText(ProxyCheckDiagnostics.diagnosticText(ProxyCheckDiagnostics.START_FAILED));
             statusTextView[0].setTextColor(Theme.getColor(Theme.key_text_RedRegular));
         };
-        statusTextView[0].setText(replaceSingleLink(getString(R.string.ProxyBottomSheetCheckStatus), Theme.getColor(Theme.key_chat_messageLinkIn), () -> {
+        // ZaStoGram: реальная проверка прокси (подключение через ProxyCheckScheduler), запускается автоматически при открытии окна.
+        final Runnable check = () -> {
             if (checking[0]) return;
 
-            final Runnable check = () -> {
-                if (checking[0]) return;
-
-                checking[0] = true;
-                statusTextView[0].setText(getString(R.string.ProxyBottomSheetChecking) + "...");
-                statusTextView[0].clear();
-                try {
-                    SharedConfig.ProxyInfo proxyInfo = new SharedConfig.ProxyInfo(address, Integer.parseInt(port), user, password, secret);
-                    boolean started = ProxyCheckScheduler.enqueueNow(UserConfig.selectedAccount, proxyInfo, proxyCheckOwner, new ProxyCheckScheduler.Callback() {
-                        @Override
-                        public void onProxyChecked(SharedConfig.ProxyInfo proxyInfo, long time, String diagnostic) {
-                            checking[0] = false;
-                            if (time == -1) {
-                                statusTextView[0].setText(ProxyCheckDiagnostics.diagnosticText(diagnostic));
-                                statusTextView[0].setTextColor(Theme.getColor(Theme.key_text_RedRegular));
-                            } else {
-                                statusTextView[0].setText(LocaleController.formatString(R.string.Ping2, time));
-                                statusTextView[0].setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGreenText));
-                            }
-                        }
-
-                        @Override
-                        public void onProxyCheckQueueFinished() {
-                        }
-                    });
-                    if (!started) {
+            checking[0] = true;
+            checkState[0] = 0;
+            statusTextView[0].setText(getString(R.string.ProxyBottomSheetChecking) + "...");
+            statusTextView[0].clear();
+            try {
+                SharedConfig.ProxyInfo proxyInfo = new SharedConfig.ProxyInfo(address, Integer.parseInt(port), user, password, secret);
+                boolean started = ProxyCheckScheduler.enqueueNow(UserConfig.selectedAccount, proxyInfo, proxyCheckOwner, new ProxyCheckScheduler.Callback() {
+                    @Override
+                    public void onProxyChecked(SharedConfig.ProxyInfo proxyInfo, long time, String diagnostic) {
                         checking[0] = false;
-                        setProxyCheckFailedStatus.run();
+                        if (time == -1) {
+                            checkState[0] = -1;
+                            statusTextView[0].setText(ProxyCheckDiagnostics.diagnosticText(diagnostic));
+                            statusTextView[0].setTextColor(Theme.getColor(Theme.key_text_RedRegular));
+                        } else {
+                            checkState[0] = 1;
+                            statusTextView[0].setText(LocaleController.formatString(R.string.Ping2, time));
+                            statusTextView[0].setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGreenText));
+                        }
                     }
-                } catch (NumberFormatException ignored) {
+
+                    @Override
+                    public void onProxyCheckQueueFinished() {
+                    }
+                });
+                if (!started) {
                     checking[0] = false;
                     setProxyCheckFailedStatus.run();
                 }
-            };
-
-            final SharedPreferences pref = MessagesController.getGlobalMainSettings();
-            if (pref.getBoolean("proxycheckstatusip", false)) {
-                check.run();
-            } else {
-                new AlertDialog.Builder(activity)
-                    .setTitle(getString(R.string.ProxyBottomSheetCheckWarning))
-                    .setMessage(getString(R.string.ProxyBottomSheetCheckWarningText))
-                    .setPositiveButton(getString(R.string.Proceed), (di, w) -> {
-                        pref.edit().putBoolean("proxycheckstatusip", true).apply();
-                        check.run();
-                    })
-                    .setNegativeButton(getString(R.string.Cancel), null)
-                    .show();
+            } catch (NumberFormatException ignored) {
+                checking[0] = false;
+                setProxyCheckFailedStatus.run();
             }
+        };
+        statusTextView[0].setText(replaceSingleLink(getString(R.string.ProxyBottomSheetCheckStatus), Theme.getColor(Theme.key_chat_messageLinkIn), () -> {
+            if (checking[0]) return;
+            check.run();
         }));
         if (!TextUtils.isEmpty(secret)) {
             final TableView.TableRowFullContent tableRow = tableView.addFullRow(getString(R.string.UseProxyTelegramInfo2));
@@ -4780,7 +4771,7 @@ public class AndroidUtilities {
 
         final ButtonWithCounterView buttonView = new ButtonWithCounterView(activity, null).setRound();
         buttonView.setText(getString(R.string.ConnectingConnectProxy));
-        buttonView.setOnClickListener(v -> {
+        final Runnable doConnect = () -> {
             SharedPreferences.Editor editor = MessagesController.getGlobalMainSettings().edit();
             editor.putBoolean("proxy_enabled", true);
             editor.putString("proxy_ip", address);
@@ -4832,6 +4823,19 @@ public class AndroidUtilities {
                 NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.showBulletin, Bulletin.TYPE_SUCCESS, getString(R.string.ProxyAddedSuccess));
             }
             dismiss.run();
+        };
+        buttonView.setOnClickListener(v -> {
+            // ZaStoGram: если проверка показала, что прокси не работает — переспрашиваем, чтобы случайно не оборвать всю загрузку.
+            if (checkState[0] == -1) {
+                new AlertDialog.Builder(activity)
+                    .setTitle("Прокси не работает")
+                    .setMessage("Проверка показала, что прокси недоступен — подключение, скорее всего, оборвёт загрузку. Подключить всё равно?")
+                    .setPositiveButton(getString(R.string.ConnectingConnectProxy), (di, w) -> doConnect.run())
+                    .setNegativeButton(getString(R.string.Cancel), null)
+                    .show();
+                return;
+            }
+            doConnect.run();
         });
         linearLayout.addView(buttonView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 48, Gravity.TOP | Gravity.FILL_HORIZONTAL, 14, 18, 14, 14));
 
@@ -4840,6 +4844,10 @@ public class AndroidUtilities {
             checking[0] = false;
             ProxyCheckScheduler.cancelOwner(proxyCheckOwner);
         });
+        // ZaStoGram: сразу автоматически проверяем прокси реальным подключением — «работает/не работает» видно до нажатия Connect.
+        if (!TextUtils.isEmpty(address) && !TextUtils.isEmpty(port)) {
+            check.run();
+        }
     }
 
     @SuppressLint("PrivateApi")

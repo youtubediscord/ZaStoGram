@@ -127,6 +127,33 @@ public class ProxyCheckScheduler {
         return false;
     }
 
+    public static int cancelEndpointAttempts(String endpointKey) {
+        if (endpointKey == null || endpointKey.length() == 0) {
+            return 0;
+        }
+        int cancelled = 0;
+        for (int i = queue.size() - 1; i >= 0; i--) {
+            Request request = queue.get(i);
+            if (!request.matchesEndpointKey(endpointKey)) {
+                continue;
+            }
+            request.cancelAll();
+            queue.remove(i);
+            cancelled++;
+            log("cancel_endpoint queued endpoint=" + endpoint(request.proxyInfo) + " target=" + endpointKey + " queued=" + queue.size());
+        }
+        if (activeRequest != null && activeRequest.matchesEndpointKey(endpointKey)) {
+            Request request = activeRequest;
+            request.cancelAll();
+            ConnectionsManager.getInstance(request.currentAccount).cancelProxyCheck(request.nativePingId);
+            activeRequest = null;
+            cancelled++;
+            log("cancel_endpoint active endpoint=" + endpoint(request.proxyInfo) + " target=" + endpointKey);
+            AndroidUtilities.runOnUIThread(startNextRunnable, PROXY_CHECK_SPACING_MS);
+        }
+        return cancelled;
+    }
+
     private static boolean shouldCheck(SharedConfig.ProxyInfo proxyInfo, boolean force) {
         if (proxyInfo == null || proxyInfo.checking) {
             return false;
@@ -401,6 +428,21 @@ public class ProxyCheckScheduler {
 
         boolean hasActiveListeners() {
             return activeListenerCount() > 0;
+        }
+
+        boolean matchesEndpointKey(String endpointKey) {
+            return ProxyEndpointKey.matchesTelemetryEndpointKey(proxyInfo, endpointKey);
+        }
+
+        void cancelAll() {
+            cancelled = true;
+            ProxyRuntimeStateStore.clearTransientState(proxyInfo);
+            for (int i = 0, count = listeners.size(); i < count; i++) {
+                Listener listener = listeners.get(i);
+                listener.cancelled = true;
+                listener.callback = null;
+                ProxyRuntimeStateStore.clearTransientState(listener.proxyInfo);
+            }
         }
 
         int activeListenerCount() {

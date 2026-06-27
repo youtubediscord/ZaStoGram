@@ -166,7 +166,7 @@ android {
     }
 
     defaultConfig {
-        minSdkVersion 21
+        minSdkVersion 24 // ZaStoGram: raised for Chaquopy (plugin engine); must match library
         targetSdkVersion 35
         versionName APP_VERSION_NAME
         ndkVersion "27.2.12479018"

@@ -1704,6 +1704,8 @@ def print_report(attempts: list[Attempt], global_lines: list[str]) -> None:
     print("- dns_cache_hit/dns_cache_store: client used or updated the last-good IP for a domain proxy.")
     print("- phase_adaptive_recipe: client changed the next FakeTLS startup recipe after a phase-specific failure.")
     print("- shadowed_by_usable_success: a late sibling startup failure was ignored because this endpoint recently delivered app-data.")
+    print("- telemetry_only: Java kept per-connection DNS telemetry out of the visible proxy status.")
+    print("- visible_delayed_dns: Java showed DNS only after the DNS telemetry stayed unresolved past the debounce window.")
     print("- held_by_usable_success: Java control-plane kept the current proxy after fresh app-data success.")
     print("- held_live_by_usable_success: Java control-plane kept proven usable status instead of showing newer sibling live telemetry, including local reconnect start.")
     print("- held_live_by_current_proxy_usable: Java control-plane kept connected current-proxy status instead of showing newer sibling socket telemetry or local reconnect start.")

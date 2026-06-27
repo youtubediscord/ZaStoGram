@@ -19,6 +19,25 @@
 -keep class org.telegram.tgnet.NativeByteBuffer { *; }
 -keep class org.telegram.tgnet.RequestTimeDelegate { *; }
 -keep class org.telegram.tgnet.RequestDelegate { *; }
+
+# ===== ZaStoGram plugin engine =====
+# Plugins import Telegram classes by their full name and reflect on members by name
+# (get_private_field / getDeclaredMethod / hooks). R8 must NOT rename them, or release
+# builds break plugins. -keepnames preserves class+member names while still shrinking
+# genuinely-unused code.
+-keepnames class org.telegram.** { *; }
+# Engine bridge classes are called from Python by name — keep fully.
+-keep class org.telegram.plugins.** { *; }
+# Embedded Python runtime (Chaquopy) and the Pine / Xposed hooking engine use JNI + reflection.
+-keep class com.chaquo.python.** { *; }
+-keep class top.canyie.pine.** { *; }
+-keep class de.robv.android.xposed.** { *; }
+-keep class com.android.internal.util.** { *; }
+-dontwarn com.chaquo.python.**
+-dontwarn top.canyie.pine.**
+-dontwarn de.robv.android.xposed.**
+# ===== end ZaStoGram plugin engine =====
+
 -keep class com.google.android.exoplayer2.ext.** { *; }
 -keep class com.google.android.exoplayer2.extractor.FlacStreamMetadata { *; }
 -keep class com.google.android.exoplayer2.metadata.flac.PictureFrame { *; }

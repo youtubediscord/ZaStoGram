@@ -202,6 +202,7 @@ public class FileLoader extends BaseController {
     public final static long DEFAULT_MAX_FILE_SIZE_PREMIUM = DEFAULT_MAX_FILE_SIZE * 2L;
 
     public final static int PRELOAD_CACHE_TYPE = 11;
+    public static final int ERROR_INVALID_LOCATION = 2;
 
     private volatile static DispatchQueue fileLoaderQueue = new DispatchQueue("fileUploadQueue");
     private final FilePathDatabase filePathDatabase;
@@ -871,6 +872,70 @@ public class FileLoader extends BaseController {
     }
 
 
+    private boolean isInvalidAttachFileName(String fileName) {
+        return TextUtils.isEmpty(fileName) || fileName.contains("" + Integer.MIN_VALUE) || fileName.startsWith("0_0");
+    }
+
+    private boolean failInvalidFileLoad(String fileName, TLRPC.Document document, SecureDocument secureDocument, WebFile webDocument, TLRPC.TL_fileLocationToBeDeprecated location, ImageLocation imageLocation, Object parentObject, int priority, int cacheType) {
+        if (!isInvalidAttachFileName(fileName)) {
+            return false;
+        }
+        String safeFileName = fileName != null ? fileName : "";
+        if (!TextUtils.isEmpty(safeFileName)) {
+            loadOperationPathsUI.remove(safeFileName);
+            loadOperationPaths.remove(safeFileName);
+        }
+        if (document != null && safeFileName.startsWith("0_0")) {
+            FileLog.e("file_loader_missing_hash document=" + safeDocInfo(document)
+                    + " location=" + safeLocationInfo(secureDocument, webDocument, location, imageLocation)
+                    + " requestClass=" + classifyProxyWarmupRequest(document, webDocument, imageLocation, parentObject, priority, cacheType));
+        } else {
+            FileLog.e("file_loader_invalid_location fileName=" + safeFileName
+                    + " document=" + safeDocInfo(document)
+                    + " location=" + safeLocationInfo(secureDocument, webDocument, location, imageLocation)
+                    + " requestClass=" + classifyProxyWarmupRequest(document, webDocument, imageLocation, parentObject, priority, cacheType));
+        }
+        if (delegate != null) {
+            delegate.fileDidFailedLoad(safeFileName, ERROR_INVALID_LOCATION);
+        }
+        if (document != null && parentObject instanceof MessageObject) {
+            MessageObject messageObject = (MessageObject) parentObject;
+            if (messageObject.getDocument() != null) {
+                getDownloadController().onDownloadFail(messageObject, ERROR_INVALID_LOCATION);
+            }
+        }
+        return true;
+    }
+
+    private String safeDocInfo(TLRPC.Document document) {
+        if (document == null) {
+            return "null";
+        }
+        String documentName = getDocumentFileName(document);
+        return "{class=" + document.getClass().getSimpleName()
+                + " id=" + document.id
+                + " dc=" + document.dc_id
+                + " size=" + document.size
+                + " mime=" + document.mime_type
+                + " name=" + (documentName != null ? documentName : "")
+                + " accessHashSet=" + (document.access_hash != 0)
+                + " fileReferenceBytes=" + (document.file_reference != null ? document.file_reference.length : -1)
+                + "}";
+    }
+
+    private String safeLocationInfo(SecureDocument secureDocument, WebFile webDocument, TLRPC.TL_fileLocationToBeDeprecated location, ImageLocation imageLocation) {
+        if (location != null) {
+            return "{type=fileLocation dc=" + location.dc_id + " volume=" + location.volume_id + " local=" + location.local_id + "}";
+        } else if (secureDocument != null && secureDocument.secureFile != null) {
+            return "{type=secureDocument dc=" + secureDocument.secureFile.dc_id + " id=" + secureDocument.secureFile.id + "}";
+        } else if (webDocument != null) {
+            return "{type=webDocument urlHash=" + Utilities.MD5(webDocument.url) + " size=" + webDocument.size + "}";
+        } else if (imageLocation != null) {
+            return "{type=imageLocation dc=" + imageLocation.dc_id + " documentId=" + imageLocation.documentId + " photoId=" + imageLocation.photoId + " size=" + imageLocation.currentSize + " imageType=" + imageLocation.imageType + "}";
+        }
+        return "null";
+    }
+
     private FileLoadOperation loadFileInternal(final TLRPC.Document document, final SecureDocument secureDocument, final WebFile webDocument, TLRPC.TL_fileLocationToBeDeprecated location, final ImageLocation imageLocation, Object parentObject, final String locationExt, final long locationSize, int priority, FileLoadOperationStream stream, final long streamOffset, boolean streamPriority, final int cacheType) {
         String fileName;
         if (location != null) {
@@ -884,14 +949,10 @@ public class FileLoader extends BaseController {
         } else {
             fileName = null;
         }
-        if (fileName == null || fileName.contains("" + Integer.MIN_VALUE)) {
+        if (failInvalidFileLoad(fileName, document, secureDocument, webDocument, location, imageLocation, parentObject, priority, cacheType)) {
             return null;
         }
-        if (fileName.startsWith("0_0")) {
-            FileLog.e(new RuntimeException("cant get hash from " + document));
-            return null;
-        }
-        if (cacheType != 10 && !TextUtils.isEmpty(fileName) && !fileName.contains("" + Integer.MIN_VALUE)) {
+        if (cacheType != 10 && !isInvalidAttachFileName(fileName)) {
             loadOperationPathsUI.put(fileName, new LoadOperationUIObject());
         }
 
@@ -1214,7 +1275,7 @@ public class FileLoader extends BaseController {
         } else {
             fileName = null;
         }
-        if (cacheType != 10 && !TextUtils.isEmpty(fileName) && !fileName.contains("" + Integer.MIN_VALUE)) {
+        if (cacheType != 10 && !isInvalidAttachFileName(fileName)) {
             LoadOperationUIObject uiObject = new FileLoader.LoadOperationUIObject();
             loadOperationPathsUI.put(fileName, uiObject);
         }
@@ -1225,7 +1286,7 @@ public class FileLoader extends BaseController {
             }
             loadFileInternal(document, secureDocument, webDocument, location, imageLocation, parentObject, locationExt, locationSize, priority, null, 0, false, cacheType);
         };
-        if (cacheType != 10 && !TextUtils.isEmpty(fileName) && !fileName.contains("" + Integer.MIN_VALUE)) {
+        if (cacheType != 10 && !isInvalidAttachFileName(fileName)) {
             LoadOperationUIObject uiObject = loadOperationPathsUI.get(fileName);
             if (uiObject != null) {
                 uiObject.loadInternalRunnable = runnableRef[0];
@@ -1236,12 +1297,10 @@ public class FileLoader extends BaseController {
 
     private boolean maybeDelayProxyStartupLoadFile(final TLRPC.Document document, final WebFile webDocument, final ImageLocation imageLocation, final Object parentObject, final int priority, final int cacheType, final Runnable runnable) {
         ProxyWarmupGate.NetworkRequestClass requestClass = classifyProxyWarmupRequest(document, webDocument, imageLocation, parentObject, priority, cacheType);
-        if (requestClass == ProxyWarmupGate.NetworkRequestClass.MEDIA_VISIBLE || ProxyWarmupGate.canStartNetworkHeavyOperation(currentAccount, 0, requestClass)) {
+        if (requestClass == ProxyWarmupGate.NetworkRequestClass.MEDIA_VISIBLE) {
             return false;
         }
-        long delay = ProxyWarmupGate.delayForNetworkHeavyOperation(currentAccount, 0, requestClass);
-        fileLoaderQueue.postRunnable(runnable, delay > 0 ? delay : 400);
-        return true;
+        return ProxyWarmupGate.delayNetworkHeavyOperationIfNeeded(currentAccount, 0, requestClass, runnable, (operation, delay) -> fileLoaderQueue.postRunnable(operation, delay));
     }
 
     private ProxyWarmupGate.NetworkRequestClass classifyProxyWarmupRequest(final TLRPC.Document document, final WebFile webDocument, final ImageLocation imageLocation, final Object parentObject, final int priority, final int cacheType) {

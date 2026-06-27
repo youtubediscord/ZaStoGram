@@ -8529,12 +8529,7 @@ public class MediaDataController extends BaseController {
     }
 
     private boolean delayProxyWarmupPrefetch(ProxyWarmupGate.NetworkRequestClass requestClass, Runnable runnable) {
-        if (ProxyWarmupGate.canStartNetworkHeavyOperation(currentAccount, 0, requestClass)) {
-            return false;
-        }
-        long delay = ProxyWarmupGate.delayForNetworkHeavyOperation(currentAccount, 0, requestClass);
-        AndroidUtilities.runOnUIThread(runnable, delay > 0 ? delay : 400);
-        return true;
+        return ProxyWarmupGate.delayNetworkHeavyOperationIfNeeded(currentAccount, 0, requestClass, runnable, (operation, delay) -> AndroidUtilities.runOnUIThread(operation, delay));
     }
 
     public void checkAllMedia(boolean force) {

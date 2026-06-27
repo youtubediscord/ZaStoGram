@@ -10,10 +10,20 @@ final class ProxyHealthStore {
     private static final long PROXY_CHECK_LIVE_FAILURE_DEDUP_MS = 1500L;
     private static final long PROXY_CHECK_CONNECTED_GRACE_MS = 60 * 1000L;
     private static final long USABLE_SUCCESS_HOLD_MS = 45 * 1000L;
+    private static final long ROTATED_AWAY_HOLD_MS = 45 * 1000L;
     private static final long PUNITIVE_FAILURE_WINDOW_MS = 30 * 1000L;
     private static final int PUNITIVE_FAILURES_TO_ROTATE = 2;
 
     private static final HashMap<String, EndpointState> endpointStates = new HashMap<>();
+    private static final HashMap<String, Long> endpointTelemetryIgnoreUntil = new HashMap<>();
+
+    enum EndpointLifecycle {
+        TESTING,
+        USABLE,
+        DEGRADED,
+        QUARANTINED,
+        ROTATED_AWAY
+    }
 
     private ProxyHealthStore() {
     }
@@ -75,6 +85,67 @@ final class ProxyHealthStore {
             return -1;
         }
         return Math.max(0, now - lastTime);
+    }
+
+    static boolean isEndpointRotatedAway(SharedConfig.ProxyInfo proxyInfo, long now) {
+        if (proxyInfo == null) {
+            return false;
+        }
+        EndpointState state = endpointStates.get(ProxyEndpointKey.exact(proxyInfo));
+        return state != null
+                && state.lifecycle == EndpointLifecycle.ROTATED_AWAY
+                && state.rotatedAwayUntil > now;
+    }
+
+    static void quarantineExactEndpoint(SharedConfig.ProxyInfo proxyInfo, String phase, long now) {
+        String exactKey = ProxyEndpointKey.exact(proxyInfo);
+        if (exactKey == null) {
+            return;
+        }
+        String normalized = ProxyCheckDiagnostics.normalize(phase);
+        EndpointState state = endpointStateForKey(exactKey);
+        state.lifecycle = EndpointLifecycle.ROTATED_AWAY;
+        state.usableSuccessUntil = 0;
+        state.lastDiagnostic = normalized;
+        state.lastCheckTime = now;
+        state.rotatedAwayUntil = now + ROTATED_AWAY_HOLD_MS;
+        if (state.consecutiveFailures <= 0) {
+            state.consecutiveFailures = 1;
+        }
+        long quarantineUntil = now + PROXY_CHECK_FAILURE_BACKOFF_MS;
+        if (state.nextCheckTime < quarantineUntil) {
+            state.nextCheckTime = quarantineUntil;
+        }
+        logControl("decision=quarantine_exact endpoint=" + ProxyEndpointKey.endpoint(proxyInfo) + " phase=" + normalized + " hold_ms=" + ROTATED_AWAY_HOLD_MS);
+    }
+
+    static void ignoreEndpointTelemetry(String endpointKey, long now) {
+        if (endpointKey == null || endpointKey.length() == 0) {
+            return;
+        }
+        pruneEndpointTelemetryIgnores(now);
+        endpointTelemetryIgnoreUntil.put(endpointKey, now + ROTATED_AWAY_HOLD_MS);
+        logControl("decision=rotated_away_ignore endpoint=" + endpointKey + " hold_ms=" + ROTATED_AWAY_HOLD_MS);
+    }
+
+    static boolean shouldIgnoreEndpointTelemetry(String endpointKey, long now) {
+        if (endpointKey == null || endpointKey.length() == 0) {
+            return false;
+        }
+        pruneEndpointTelemetryIgnores(now);
+        for (String ignoredKey : endpointTelemetryIgnoreUntil.keySet()) {
+            Long ignoreUntil = endpointTelemetryIgnoreUntil.get(ignoredKey);
+            if (ignoreUntil != null
+                    && ignoreUntil > now
+                    && ProxyEndpointKey.sameTelemetryEndpointKey(endpointKey, ignoredKey)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static void clearRotatedAwayTelemetry() {
+        endpointTelemetryIgnoreUntil.clear();
     }
 
     static EndpointFailureResult rememberLiveFailure(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now) {
@@ -166,10 +237,12 @@ final class ProxyHealthStore {
         state.consecutiveFailures = 0;
         state.rotationFailures = 0;
         state.rotationFailureWindowStartTime = 0;
+        state.lifecycle = usableSuccess ? EndpointLifecycle.USABLE : EndpointLifecycle.TESTING;
         state.lastDiagnostic = ProxyCheckDiagnostics.normalize(diagnostic);
         state.lastCheckTime = now;
         state.nextCheckTime = now + PROXY_CHECK_CONNECTED_GRACE_MS;
         state.usableSuccessUntil = usableSuccess ? now + USABLE_SUCCESS_HOLD_MS : 0;
+        state.rotatedAwayUntil = 0;
         if (usableSuccess) {
             state.lastUsableSuccessTime = now;
         }
@@ -177,6 +250,7 @@ final class ProxyHealthStore {
 
     private static EndpointFailureResult rememberEndpointFailure(EndpointState state, SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now, String source) {
         state.usableSuccessUntil = 0;
+        state.lifecycle = EndpointLifecycle.DEGRADED;
         state.lastDiagnostic = ProxyCheckDiagnostics.normalize(diagnostic);
         state.lastCheckTime = now;
         state.consecutiveFailures++;
@@ -195,6 +269,9 @@ final class ProxyHealthStore {
         long backoff = Math.min(PROXY_CHECK_FAILURE_BACKOFF_MAX_MS, PROXY_CHECK_FAILURE_BACKOFF_MS * multiplier);
         state.nextCheckTime = now + backoff;
         boolean rotationAllowed = ProxyPhasePolicy.canRotate(state.lastDiagnostic) && state.rotationFailures >= PUNITIVE_FAILURES_TO_ROTATE;
+        if (rotationAllowed) {
+            state.lifecycle = EndpointLifecycle.QUARANTINED;
+        }
         logControl("decision=backoff endpoint=" + ProxyEndpointKey.endpoint(proxyInfo) + " wait_ms=" + backoff + " failures=" + state.consecutiveFailures + " rotation_failures=" + state.rotationFailures + " rotation_allowed=" + rotationAllowed + " phase=" + state.lastDiagnostic + " source=" + source);
         return new EndpointFailureResult(state.lastDiagnostic, state.consecutiveFailures, state.rotationFailures, rotationAllowed, true);
     }
@@ -238,6 +315,15 @@ final class ProxyHealthStore {
         return networkState.nextCheckTime > exactState.nextCheckTime ? networkState : exactState;
     }
 
+    private static void pruneEndpointTelemetryIgnores(long now) {
+        java.util.Iterator<java.util.Map.Entry<String, Long>> iterator = endpointTelemetryIgnoreUntil.entrySet().iterator();
+        while (iterator.hasNext()) {
+            if (iterator.next().getValue() <= now) {
+                iterator.remove();
+            }
+        }
+    }
+
     private static void logControl(String message) {
         if (BuildVars.LOGS_ENABLED) {
             FileLog.d("proxy_control " + message);
@@ -272,10 +358,12 @@ final class ProxyHealthStore {
         int consecutiveFailures;
         int rotationFailures;
         long rotationFailureWindowStartTime;
+        EndpointLifecycle lifecycle = EndpointLifecycle.TESTING;
         String lastDiagnostic = ProxyCheckDiagnostics.UNKNOWN_FAIL;
         long lastCheckTime;
         long nextCheckTime;
         long usableSuccessUntil;
         long lastUsableSuccessTime;
+        long rotatedAwayUntil;
     }
 }

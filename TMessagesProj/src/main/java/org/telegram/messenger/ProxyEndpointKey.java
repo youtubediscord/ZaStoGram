@@ -52,6 +52,21 @@ public final class ProxyEndpointKey {
         return liveStage(proxyInfo).equals(endpointKey);
     }
 
+    public static boolean matchesTelemetryEndpointKey(SharedConfig.ProxyInfo proxyInfo, String endpointKey) {
+        if (proxyInfo == null || endpointKey == null || endpointKey.length() == 0) {
+            return false;
+        }
+        return sameTelemetryEndpointKey(liveStage(proxyInfo), endpointKey)
+                || sameTelemetryEndpointKey(networkLiveStage(proxyInfo), endpointKey);
+    }
+
+    public static boolean sameTelemetryEndpointKey(String left, String right) {
+        if (left == null || right == null || left.length() == 0 || right.length() == 0) {
+            return false;
+        }
+        return left.equals(right) || left.startsWith(right + ":") || right.startsWith(left + ":");
+    }
+
     public static String liveStage(SharedConfig.ProxyInfo proxyInfo) {
         if (proxyInfo == null) {
             return "";

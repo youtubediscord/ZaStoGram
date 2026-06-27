@@ -67,6 +67,7 @@ public class ProxyRotationController implements NotificationCenter.NotificationC
                 log("cancel rotation_settings_applied");
                 return;
             }
+            ProxyRuntimeStateStore.clearRotatedAwayTelemetry();
             engine.onSettingsChanged();
             log("cancel settings_changed");
         } else if (id == NotificationCenter.didUpdateConnectionState && account == UserConfig.selectedAccount) {
@@ -84,6 +85,10 @@ public class ProxyRotationController implements NotificationCenter.NotificationC
                 }
             } else {
                 if ((state == ConnectionsManager.ConnectionStateConnected || state == ConnectionsManager.ConnectionStateUpdating) && SharedConfig.currentProxy != null) {
+                    if (ProxyRuntimeStateStore.isEndpointRotatedAway(SharedConfig.currentProxy)) {
+                        log("connected ignored_rotated_away endpoint=" + endpoint(SharedConfig.currentProxy));
+                        return;
+                    }
                     ProxyRuntimeStateStore.markConnected(SharedConfig.currentProxy);
                     engine.onConnected();
                 }

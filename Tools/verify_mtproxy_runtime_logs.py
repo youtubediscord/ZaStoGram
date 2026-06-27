@@ -28,6 +28,8 @@ DISCONNECT_REQUIRED_FIELDS = (
 ALLOWED_DATA_PATH_REASONS = {"first_tls_app_recv", "first_mtproxy_packet_recv"}
 USABLE_SUCCESS_PROXY_PHASES = {"first_tls_app_recv", "first_mtproxy_packet_recv"}
 VISIBLE_SUCCESS_HOLD_MS = 45 * 1000
+DNS_VISIBLE_DELAY_MS = 800
+DNS_VISIBLE_TELEMETRY_PHASES = {"host_resolve_start", "dns_coalesce_wait"}
 LIVE_VISIBLE_OVERWRITE_PHASES = {
     "dns_cache_hit",
     "dns_cache_store",
@@ -61,6 +63,8 @@ WARMUP_UPLOAD_GET_FILE_LIMIT = 3
 WARMUP_TCP_CONNECT_GATE_LIMIT = 5
 DNS_OUTAGE_HOLD_MS = 60 * 1000
 DNS_OUTAGE_PROVIDERS = {"system", "google_json_doh", "cloudflare_json_doh"}
+ROTATED_AWAY_HOLD_MS = 45 * 1000
+ROTATED_AWAY_ALLOWED_DECISIONS = {"ignored_rotated_away", "ignored_stale_endpoint"}
 
 
 def resolve_markers_path(path: Path) -> Path:
@@ -153,6 +157,41 @@ def verify_visible_success_hold(lines: list[str]) -> list[str]:
     return failures
 
 
+def verify_dns_visible_debounce(lines: list[str]) -> list[str]:
+    failures: list[str] = []
+    telemetry: list[tuple[int | None, str, str, str]] = []
+    for line in lines:
+        decision = proxy_control_decision(line)
+        if not decision:
+            continue
+        phase = line_field(line, "phase")
+        endpoint = line_field(line, "endpoint")
+        current_time = line_time_ms(line)
+        if decision == "visible_only" and phase in DNS_VISIBLE_TELEMETRY_PHASES:
+            failures.append(f"short DNS telemetry mirrored as visible; use telemetry_only/visible_delayed_dns: {line}")
+            continue
+        if decision == "telemetry_only" and phase in DNS_VISIBLE_TELEMETRY_PHASES:
+            telemetry.append((current_time, endpoint, phase, line))
+            continue
+        if decision != "visible_delayed_dns":
+            continue
+        if phase not in DNS_VISIBLE_TELEMETRY_PHASES:
+            failures.append(f"visible_delayed_dns used for non-DNS phase: {line}")
+            continue
+        matching = [
+            item
+            for item in telemetry
+            if item[2] == phase and same_proxy_endpoint(item[1], endpoint)
+        ]
+        if not matching:
+            failures.append(f"visible_delayed_dns without prior telemetry_only: {line}")
+            continue
+        start_time, _, _, start_line = matching[-1]
+        if start_time is not None and current_time is not None and current_time - start_time < DNS_VISIBLE_DELAY_MS:
+            failures.append(f"visible_delayed_dns before {DNS_VISIBLE_DELAY_MS}ms debounce: {line} after {start_line}")
+    return failures
+
+
 def verify_rotation_hysteresis(lines: list[str]) -> list[str]:
     failures: list[str] = []
     usable_successes: list[tuple[int | None, str, str]] = []
@@ -230,6 +269,35 @@ def verify_dns_outage_rotation_hold(lines: list[str]) -> list[str]:
     return failures
 
 
+def verify_rotated_away_endpoint_hold(lines: list[str]) -> list[str]:
+    failures: list[str] = []
+    rotation_triggers: list[tuple[int | None, str, str]] = []
+    for line in lines:
+        if "proxy_rotation decision=trigger" in line:
+            rotation_triggers.append((line_time_ms(line), line_field(line, "endpoint"), line))
+            continue
+        decision = proxy_control_decision(line)
+        if not decision:
+            continue
+        endpoint = line_field(line, "endpoint")
+        if not endpoint:
+            continue
+        current_time = line_time_ms(line)
+        for trigger_time, trigger_endpoint, trigger_line in rotation_triggers:
+            if not same_proxy_endpoint(trigger_endpoint, endpoint):
+                continue
+            if trigger_time is not None and current_time is not None and current_time - trigger_time > ROTATED_AWAY_HOLD_MS:
+                continue
+            if decision in ROTATED_AWAY_ALLOWED_DECISIONS:
+                break
+            failures.append(
+                "rotated-away endpoint telemetry accepted after rotation trigger: "
+                f"{line} after {trigger_line}"
+            )
+            break
+    return failures
+
+
 def verify_dns_resolver_logs(lines: list[str]) -> list[str]:
     failures: list[str] = []
     for line in lines:
@@ -257,6 +325,24 @@ def verify_startup_warmup_fanout(lines: list[str]) -> list[str]:
         return failures
 
     before_usable = lines[:first_usable_index]
+    repeated_delay_lines: dict[str, list[str]] = {}
+    for line in before_usable:
+        lower_line = line.lower()
+        if "proxy_warmup state=" not in lower_line or "decision=delay" not in lower_line or "delay=1500" not in lower_line:
+            continue
+        if "class=stories_prefetch" not in lower_line and "class=sticker_prefetch" not in lower_line:
+            continue
+        request_class = line_field(lower_line, "class") or "unknown"
+        account = line_field(lower_line, "account") or "unknown"
+        endpoint = line_field(lower_line, "endpoint") or "none"
+        repeated_delay_lines.setdefault(f"{account}:{request_class}:{endpoint}", []).append(line)
+    for key, matching_lines in repeated_delay_lines.items():
+        if len(matching_lines) > 1:
+            failures.append(
+                "proxy_warmup prefetch delays must be bucketed before first usable success: "
+                f"key={key} count={len(matching_lines)} first={matching_lines[0]}"
+            )
+
     upload_get_file_lines = [line for line in before_usable if "upload_getFile" in line]
     if len(upload_get_file_lines) > WARMUP_UPLOAD_GET_FILE_LIMIT:
         failures.append(
@@ -375,8 +461,10 @@ def verify_lines(lines: list[str]) -> list[str]:
             failures.append(f"mtproxy_disconnect missing invariant fields {','.join(missing)}: {line}")
 
     failures.extend(verify_visible_success_hold(lines))
+    failures.extend(verify_dns_visible_debounce(lines))
     failures.extend(verify_rotation_hysteresis(lines))
     failures.extend(verify_dns_outage_rotation_hold(lines))
+    failures.extend(verify_rotated_away_endpoint_hold(lines))
     failures.extend(verify_dns_resolver_logs(lines))
     failures.extend(verify_startup_warmup_fanout(lines))
     failures.extend(verify_log_noise_and_tlparse(lines))

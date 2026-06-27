@@ -1737,7 +1737,8 @@ public class FileLoadOperation {
             if (atomOffset >= partOffset + partSize - 16) {
                 long count = partOffset + partSize - atomOffset;
                 if (count > Integer.MAX_VALUE) {
-                    throw new RuntimeException("!!!");
+                    FileLog.e("file_load_preload_offset_out_of_range file=" + fileName + " count=" + count + " atomOffset=" + atomOffset + " partOffset=" + partOffset + " partSize=" + partSize);
+                    return 0;
                 }
                 preloadTempBufferCount = (int) count;
                 long position = partBuffer.limit() - preloadTempBufferCount;
@@ -1753,7 +1754,8 @@ public class FileLoadOperation {
             } else {
                 long count = atomOffset - partOffset;
                 if (count > Integer.MAX_VALUE) {
-                    throw new RuntimeException("!!!");
+                    FileLog.e("file_load_preload_offset_out_of_range file=" + fileName + " count=" + count + " atomOffset=" + atomOffset + " partOffset=" + partOffset + " partSize=" + partSize);
+                    return 0;
                 }
                 partBuffer.position((int) count);
                 partBuffer.readBytes(preloadTempBuffer, 0, 16, false);
@@ -1938,7 +1940,9 @@ public class FileLoadOperation {
                         if (finishedDownloading && bytesCountPadding != 0) {
                             long limit = bytes.limit() - bytesCountPadding;
                             if (BuildVars.DEBUG_VERSION && limit > Integer.MAX_VALUE) {
-                                throw new RuntimeException("Out of limit" + limit);
+                                FileLog.e("file_load_padding_limit_out_of_range file=" + fileName + " limit=" + limit + " bytesLimit=" + bytes.limit() + " padding=" + bytesCountPadding);
+                                onFail(false, 0);
+                                return false;
                             }
                             bytes.limit((int) (limit));
                         }
@@ -1989,7 +1993,9 @@ public class FileLoadOperation {
                                 }
                                 fileReadStream.seek(fileOffset);
                                 if (BuildVars.DEBUG_VERSION && availableSize > Integer.MAX_VALUE) {
-                                    throw new RuntimeException("!!!");
+                                    FileLog.e("file_load_cdn_check_size_out_of_range file=" + fileName + " availableSize=" + availableSize + " fileOffset=" + fileOffset + " chunkSize=" + cdnChunkCheckSize);
+                                    onFail(false, 0);
+                                    return false;
                                 }
                                 fileReadStream.readFully(cdnCheckBytes, 0, (int) availableSize);
 

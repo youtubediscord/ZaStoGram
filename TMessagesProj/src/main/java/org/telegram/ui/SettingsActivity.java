@@ -689,9 +689,12 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         // ZaStoGram — все кастомные настройки форка в одном отдельном разделе (отдельно от официальных).
         items.add(UItem.asHeader("ZaStoGram"));
         items.add(SettingCell.Factory.of(1001, IconBackgroundColors.GREEN.top, IconBackgroundColors.GREEN.bottom, R.drawable.settings_privacy, "Приватность", "Удалённые, самоуничтожение, view-once, скриншоты, реклама"));
+        items.add(SettingCell.Factory.of(1003, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.settings_folders, "Плагины", "Python-плагины (совместимы с exteraGram)"));
         items.add(UItem.asShadow(null));
         // ZaStoGram — бесплатные прокси-каналы вынесены в отдельный раздел наверху (рядом с приватностью).
         items.add(UItem.asHeader(getString(R.string.FreeProxyChannels)));
+        // Дубль «Настройки прокси» рядом с каталогом — быстро отключить нерабочий прокси, не уходя в общие настройки.
+        items.add(SettingCell.Factory.of(1002, IconBackgroundColors.BLUE.top, IconBackgroundColors.BLUE.bottom, R.drawable.settings_data, getString(R.string.ProxySettings), null));
         items.add(SettingCell.Factory.of(27, IconBackgroundColors.GREEN.top, IconBackgroundColors.GREEN.bottom, R.drawable.settings_privacy, getString(R.string.ZapretVpnSponsorSetting), null, getString(SharedConfig.showZapretVpnSponsor ? R.string.ZapretProxySponsorOn : R.string.ZapretProxySponsorOff)));
         items.add(SettingCell.Factory.of(28, IconBackgroundColors.BLUE.top, IconBackgroundColors.BLUE.bottom, R.drawable.settings_channel, getString(R.string.FreeProxyMtProxyEveryday)));
         items.add(SettingCell.Factory.of(29, IconBackgroundColors.BLUE_LIGHT.top, IconBackgroundColors.BLUE_LIGHT.bottom, R.drawable.settings_channel, getString(R.string.FreeProxyProxyMtProto)));
@@ -845,6 +848,12 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                 break;
             case 1001:
                 presentSettingFragment(new ZaStoPrivacySettingsActivity());
+                break;
+            case 1003:
+                presentSettingFragment(new org.telegram.ui.Plugins.PluginsActivity());
+                break;
+            case 1002:
+                presentSettingFragment(new ProxyListActivity());
                 break;
             case 7:
                 presentSettingFragment(new FiltersSetupActivity());

@@ -1,0 +1,619 @@
+package org.telegram.plugins;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.text.TextUtils;
+
+import com.chaquo.python.PyException;
+import com.chaquo.python.PyObject;
+import com.chaquo.python.Python;
+import com.chaquo.python.android.AndroidPlatform;
+
+import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.BuildConfig;
+import org.telegram.messenger.DispatchQueue;
+import org.telegram.messenger.FileLog;
+import org.telegram.messenger.NotificationCenter;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * Central controller for the ZaStoGram Python plugin engine (exteraGram-compatible).
+ *
+ * Responsibilities: starting the embedded CPython runtime (Chaquopy), discovering and
+ * persisting installed .plugin files, loading/unloading them (which installs/removes their
+ * Pine hooks), and routing settings + network-response callbacks between Java and Python.
+ *
+ * Threading: all Python execution is serialized onto {@link #queue}. The plugin metadata
+ * list ({@link #plugins}) is parsed in pure Java so the UI can list plugins even before —
+ * or without — the Python runtime being up.
+ */
+public class PluginsController {
+
+    private static volatile PluginsController instance;
+
+    private Context appContext;
+    private DispatchQueue queue;
+
+    private volatile boolean pythonStarted;
+    private PyObject loader; // _plugin_loader module
+
+    private final List<PluginInfo> plugins = new ArrayList<>();
+    private final Map<String, PluginContext> contexts = new HashMap<>();
+
+    private static final Pattern META_PATTERN =
+            Pattern.compile("^__(\\w+)__\\s*=\\s*(?:'([^']*)'|\"([^\"]*)\")");
+
+    public static PluginsController getInstance() {
+        PluginsController local = instance;
+        if (local == null) {
+            synchronized (PluginsController.class) {
+                local = instance;
+                if (local == null) {
+                    instance = local = new PluginsController();
+                }
+            }
+        }
+        return local;
+    }
+
+    private PluginsController() {
+    }
+
+    // ------------------------------------------------------------------ lifecycle
+
+    /** Called once from ApplicationLoader.onCreate(). Loads enabled plugins off the main thread. */
+    public void init(Context context) {
+        if (appContext != null) {
+            return;
+        }
+        // Only run the Python engine in the main process — avoid starting CPython in :push etc.
+        if (!isMainProcess(context)) {
+            return;
+        }
+        appContext = context.getApplicationContext();
+        queue = new DispatchQueue("zasto_plugins");
+        // Build the metadata list synchronously (cheap, pure Java) so the UI is ready early.
+        try {
+            scanInstalled();
+        } catch (Throwable t) {
+            FileLog.e(t);
+        }
+        // Start Python and load enabled plugins in the background.
+        queue.postRunnable(() -> {
+            try {
+                ensurePythonStarted();
+                List<PluginInfo> snapshot;
+                synchronized (plugins) {
+                    snapshot = new ArrayList<>(plugins);
+                }
+                for (PluginInfo info : snapshot) {
+                    if (info.enabled && isCompatible(info)) {
+                        loadPluginInternal(info);
+                    }
+                }
+                refreshRequestHooks();
+            } catch (Throwable t) {
+                FileLog.e(t);
+            }
+            notifyChanged();
+        });
+    }
+
+    private synchronized void ensurePythonStarted() {
+        if (pythonStarted) {
+            return;
+        }
+        try {
+            if (!Python.isStarted()) {
+                Python.start(new AndroidPlatform(appContext));
+            }
+            loader = Python.getInstance().getModule("_plugin_loader");
+            pythonStarted = true;
+        } catch (Throwable t) {
+            FileLog.e("zasto plugins: failed to start python", t);
+        }
+    }
+
+    public boolean isPythonReady() {
+        return pythonStarted && loader != null;
+    }
+
+    // ------------------------------------------------------------------ discovery / persistence
+
+    public File pluginsDir() {
+        File dir = new File(appContext.getFilesDir(), "plugins");
+        if (!dir.exists()) {
+            //noinspection ResultOfMethodCallIgnored
+            dir.mkdirs();
+        }
+        return dir;
+    }
+
+    private SharedPreferences prefs() {
+        return appContext.getSharedPreferences("zasto_plugins", Context.MODE_PRIVATE);
+    }
+
+    /** Rebuild {@link #plugins} from the files on disk + persisted enabled flags. */
+    private void scanInstalled() {
+        Set<String> ids = prefs().getStringSet("ids", new HashSet<>());
+        List<PluginInfo> list = new ArrayList<>();
+        for (String id : ids) {
+            File f = new File(pluginsDir(), id + ".plugin");
+            if (!f.exists()) {
+                continue;
+            }
+            PluginInfo info = parseMetadata(f);
+            if (info == null) {
+                info = new PluginInfo();
+                info.id = id;
+            }
+            info.id = id;
+            info.filePath = f.getAbsolutePath();
+            info.enabled = prefs().getBoolean("enabled_" + id, true);
+            list.add(info);
+        }
+        synchronized (plugins) {
+            plugins.clear();
+            plugins.addAll(list);
+        }
+    }
+
+    private void persistIndex() {
+        SharedPreferences.Editor e = prefs().edit();
+        Set<String> ids = new HashSet<>();
+        synchronized (plugins) {
+            for (PluginInfo info : plugins) {
+                ids.add(info.id);
+                e.putBoolean("enabled_" + info.id, info.enabled);
+            }
+        }
+        e.putStringSet("ids", ids);
+        e.apply();
+    }
+
+    /** Pure-Java parse of the module-level __dunder__ metadata (no Python needed). */
+    public static PluginInfo parseMetadata(File file) {
+        PluginInfo info = new PluginInfo();
+        boolean found = false;
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(file)))) {
+            String line;
+            int scanned = 0;
+            while ((line = r.readLine()) != null && scanned < 200) {
+                scanned++;
+                Matcher m = META_PATTERN.matcher(line.trim());
+                if (!m.find()) {
+                    continue;
+                }
+                String key = m.group(1);
+                String value = m.group(2) != null ? m.group(2) : m.group(3);
+                found = true;
+                switch (key) {
+                    case "id": info.id = value; break;
+                    case "name": info.name = value; break;
+                    case "description": info.description = value; break;
+                    case "author": info.author = value; break;
+                    case "version": info.version = value; break;
+                    case "min_version": info.minVersion = value; break;
+                    case "icon": info.icon = value; break;
+                    default: break;
+                }
+            }
+        } catch (Throwable t) {
+            FileLog.e(t);
+        }
+        return found ? info : null;
+    }
+
+    // ------------------------------------------------------------------ install / enable / delete
+
+    /** Install from a plain file path. Returns the resulting PluginInfo, or null on failure. */
+    public PluginInfo installFromFile(File src) {
+        try (InputStream in = new FileInputStream(src)) {
+            return installFromStream(in);
+        } catch (Throwable t) {
+            FileLog.e(t);
+            return null;
+        }
+    }
+
+    /** Install from an arbitrary input stream (e.g. a content:// Uri opened by the UI). */
+    public PluginInfo installFromStream(InputStream in) {
+        try {
+            // Stage to a temp file so we can read the id before choosing the final name.
+            File tmp = new File(pluginsDir(), "_import_" + System.currentTimeMillis() + ".tmp");
+            copy(in, tmp);
+            PluginInfo meta = parseMetadata(tmp);
+            if (meta == null || TextUtils.isEmpty(meta.id)) {
+                //noinspection ResultOfMethodCallIgnored
+                tmp.delete();
+                return null;
+            }
+            File dest = new File(pluginsDir(), meta.id + ".plugin");
+            // Replacing an existing plugin: unload the old instance first.
+            PluginInfo existing = findById(meta.id);
+            if (existing != null) {
+                unloadPluginInternal(existing);
+            }
+            if (dest.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                dest.delete();
+            }
+            if (!tmp.renameTo(dest)) {
+                copyFile(tmp, dest);
+                //noinspection ResultOfMethodCallIgnored
+                tmp.delete();
+            }
+            meta.filePath = dest.getAbsolutePath();
+            meta.enabled = true;
+            synchronized (plugins) {
+                plugins.remove(existing);
+                plugins.add(meta);
+            }
+            persistIndex();
+            final PluginInfo toLoad = meta;
+            queue.postRunnable(() -> {
+                ensurePythonStarted();
+                if (isCompatible(toLoad)) {
+                    loadPluginInternal(toLoad);
+                }
+                refreshRequestHooks();
+                notifyChanged();
+            });
+            return meta;
+        } catch (Throwable t) {
+            FileLog.e(t);
+            return null;
+        }
+    }
+
+    public void setEnabled(String id, boolean enabled) {
+        PluginInfo info = findById(id);
+        if (info == null || info.enabled == enabled) {
+            return;
+        }
+        info.enabled = enabled;
+        persistIndex();
+        queue.postRunnable(() -> {
+            ensurePythonStarted();
+            if (enabled) {
+                if (isCompatible(info)) {
+                    loadPluginInternal(info);
+                }
+            } else {
+                unloadPluginInternal(info);
+            }
+            refreshRequestHooks();
+            notifyChanged();
+        });
+    }
+
+    public void deletePlugin(String id) {
+        PluginInfo info = findById(id);
+        if (info == null) {
+            return;
+        }
+        synchronized (plugins) {
+            plugins.remove(info);
+        }
+        persistIndex();
+        prefs().edit().remove("enabled_" + id).apply();
+        queue.postRunnable(() -> {
+            unloadPluginInternal(info);
+            try {
+                File f = new File(info.filePath);
+                if (f.exists()) {
+                    //noinspection ResultOfMethodCallIgnored
+                    f.delete();
+                }
+            } catch (Throwable t) {
+                FileLog.e(t);
+            }
+            // Also wipe the plugin's persisted settings.
+            try {
+                appContext.getSharedPreferences("plugin_settings_" + id, Context.MODE_PRIVATE)
+                        .edit().clear().apply();
+            } catch (Throwable ignore) {
+            }
+            refreshRequestHooks();
+            notifyChanged();
+        });
+    }
+
+    // ------------------------------------------------------------------ load / unload (Python)
+
+    private void loadPluginInternal(PluginInfo info) {
+        if (!isPythonReady()) {
+            info.error = "python runtime unavailable";
+            return;
+        }
+        PluginContext ctx = contexts.get(info.id);
+        if (ctx != null) {
+            // already loaded
+            return;
+        }
+        ctx = new PluginContext(info.id);
+        try {
+            loader.callAttr("instantiate", info.filePath, info.id, ctx);
+            contexts.put(info.id, ctx);
+            info.loaded = true;
+            info.error = null;
+        } catch (PyException e) {
+            info.loaded = false;
+            info.error = shortError(e);
+            FileLog.e("zasto plugin '" + info.id + "' failed to load", e);
+        } catch (Throwable t) {
+            info.loaded = false;
+            info.error = shortError(t);
+            FileLog.e(t);
+        }
+    }
+
+    private void unloadPluginInternal(PluginInfo info) {
+        if (info == null) {
+            return;
+        }
+        try {
+            if (isPythonReady()) {
+                loader.callAttr("unload", info.id);
+            }
+        } catch (Throwable t) {
+            FileLog.e(t);
+        }
+        PluginContext ctx = contexts.remove(info.id);
+        if (ctx != null) {
+            ctx.unhookAll();
+        }
+        info.loaded = false;
+    }
+
+    // ------------------------------------------------------------------ settings bridge (UI)
+
+    /**
+     * Returns a render model for a plugin's settings screen as a Java List of Maps so the
+     * Telegram UI never has to touch Python objects directly. Each map: type/key/text/
+     * subtext/icon/value/options/index. Returns empty list if the plugin has no settings.
+     */
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> getSettingsModel(String id) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (!isPythonReady()) {
+            return out;
+        }
+        try {
+            PyObject model = loader.callAttr("get_settings_model", id);
+            if (model == null) {
+                return out;
+            }
+            Object java = model.toJava(List.class);
+            if (java instanceof List) {
+                for (Object row : (List<Object>) java) {
+                    if (row instanceof Map) {
+                        out.add((Map<String, Object>) row);
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            FileLog.e(t);
+        }
+        return out;
+    }
+
+    /** Called on the UI thread when the user toggles/edits a setting row. */
+    public void onSettingChange(String id, String key, Object value) {
+        if (!isPythonReady()) {
+            return;
+        }
+        try {
+            loader.callAttr("on_setting_change", id, key, value);
+        } catch (Throwable t) {
+            logError(id, "on_setting_change", t);
+        }
+    }
+
+    /** Called on the UI thread when the user clicks a Text settings row; view anchors menus. */
+    public void onSettingClick(String id, int index, Object view) {
+        if (!isPythonReady()) {
+            return;
+        }
+        try {
+            loader.callAttr("on_setting_click", id, index, view);
+        } catch (Throwable t) {
+            logError(id, "on_setting_click", t);
+        }
+    }
+
+    // ------------------------------------------------------------------ network hook bridge
+
+    /**
+     * Called from {@link PluginRequestInterceptor} on the network delegate thread for every
+     * completed request. Returns the response to deliver downstream, or null to drop it
+     * (HookStrategy.CANCEL). Runs synchronously — Chaquopy's GIL serializes the call.
+     */
+    public Object dispatchPostRequest(String requestName, int account, Object response, Object error) {
+        if (!isPythonReady()) {
+            return response;
+        }
+        try {
+            PyObject out = loader.callAttr("dispatch_post_request", requestName, account, response, error);
+            if (out == null) {
+                return null; // CANCEL
+            }
+            Object java = out.toJava(Object.class);
+            if (PluginRequestInterceptor.CANCEL_SENTINEL.equals(java)) {
+                return null;
+            }
+            return java;
+        } catch (Throwable t) {
+            FileLog.e(t);
+            return response;
+        }
+    }
+
+    public boolean hasRequestHooks() {
+        if (!isPythonReady()) {
+            return false;
+        }
+        try {
+            PyObject b = loader.callAttr("has_request_hooks");
+            return b != null && b.toBoolean();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private void refreshRequestHooks() {
+        try {
+            PluginRequestInterceptor.setActive(hasRequestHooks());
+        } catch (Throwable t) {
+            FileLog.e(t);
+        }
+    }
+
+    // ------------------------------------------------------------------ helpers
+
+    public List<PluginInfo> getPlugins() {
+        synchronized (plugins) {
+            return new ArrayList<>(plugins);
+        }
+    }
+
+    public PluginInfo findById(String id) {
+        synchronized (plugins) {
+            for (PluginInfo info : plugins) {
+                if (info.id.equals(id)) {
+                    return info;
+                }
+            }
+        }
+        return null;
+    }
+
+    public boolean isCompatible(PluginInfo info) {
+        if (info == null) {
+            return false;
+        }
+        if (TextUtils.isEmpty(info.minVersion)) {
+            return true;
+        }
+        boolean ok = compareVersions(BuildConfig.BUILD_VERSION_STRING, info.minVersion) >= 0;
+        if (!ok && info.error == null) {
+            info.error = "requires " + info.minVersion + "+";
+        }
+        return ok;
+    }
+
+    /** Numeric dotted-version compare. Returns >0 if a>b, 0 if equal, <0 if a<b. */
+    public static int compareVersions(String a, String b) {
+        if (a == null) a = "0";
+        if (b == null) b = "0";
+        String[] pa = a.split("\\.");
+        String[] pb = b.split("\\.");
+        int n = Math.max(pa.length, pb.length);
+        for (int i = 0; i < n; i++) {
+            int va = i < pa.length ? safeInt(pa[i]) : 0;
+            int vb = i < pb.length ? safeInt(pb[i]) : 0;
+            if (va != vb) {
+                return Integer.compare(va, vb);
+            }
+        }
+        return 0;
+    }
+
+    private static int safeInt(String s) {
+        try {
+            // strip any trailing non-digits (e.g. "12a")
+            StringBuilder sb = new StringBuilder();
+            for (char c : s.toCharArray()) {
+                if (c >= '0' && c <= '9') sb.append(c); else break;
+            }
+            return sb.length() == 0 ? 0 : Integer.parseInt(sb.toString());
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+
+    private static String shortError(Throwable t) {
+        String msg = t.getMessage();
+        if (TextUtils.isEmpty(msg)) {
+            msg = t.getClass().getSimpleName();
+        }
+        if (msg.length() > 200) {
+            msg = msg.substring(0, 200) + "…";
+        }
+        return msg;
+    }
+
+    private void notifyChanged() {
+        AndroidUtilities.runOnUIThread(() -> {
+            try {
+                NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.pluginsDidLoad);
+            } catch (Throwable ignore) {
+                // pluginsDidLoad may not exist yet during early init; UI also refreshes onResume.
+            }
+        });
+    }
+
+    // ------------------------------------------------------------------ logging (called from Python)
+
+    public static void log(String pluginId, String msg) {
+        FileLog.d("[plugin:" + pluginId + "] " + msg);
+    }
+
+    public static void logError(String pluginId, String where, Throwable t) {
+        FileLog.e("[plugin:" + pluginId + "] " + where, t);
+    }
+
+    // ------------------------------------------------------------------ io
+
+    private static void copy(InputStream in, File dest) throws Exception {
+        try (OutputStream out = new FileOutputStream(dest)) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                out.write(buf, 0, n);
+            }
+        }
+    }
+
+    private static void copyFile(File src, File dest) throws Exception {
+        try (InputStream in = new FileInputStream(src)) {
+            copy(in, dest);
+        }
+    }
+
+    private static boolean isMainProcess(Context context) {
+        try {
+            int pid = android.os.Process.myPid();
+            android.app.ActivityManager am =
+                    (android.app.ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+            if (am != null) {
+                List<android.app.ActivityManager.RunningAppProcessInfo> procs = am.getRunningAppProcesses();
+                if (procs != null) {
+                    for (android.app.ActivityManager.RunningAppProcessInfo p : procs) {
+                        if (p.pid == pid) {
+                            return p.processName != null && !p.processName.contains(":");
+                        }
+                    }
+                }
+            }
+        } catch (Throwable ignore) {
+        }
+        return true; // assume main when undetermined
+    }
+}

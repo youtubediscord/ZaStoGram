@@ -29,6 +29,7 @@ CHECKS = [
     "check_proxy_connection_live_stages.py",
     "check_proxy_control_plane_policy.py",
     "check_proxy_usable_success_hold.py",
+    "check_proxy_dns_visible_debounce.py",
     "check_dns_resolver_fallback.py",
     "check_mtproto_partial_packet_log.py",
     "check_debug_parser_unmapped_logs.py",

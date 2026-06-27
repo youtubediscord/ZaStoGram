@@ -66,6 +66,7 @@ def run_runtime_log_checks(failures: list[str]) -> None:
         bad_story = tmp_path / "bad_story.txt"
         bad_sticker = tmp_path / "bad_sticker.txt"
         good = tmp_path / "good.txt"
+        bad_warmup_churn = tmp_path / "bad_warmup_churn.txt"
         bad_upload.write_text(
             runtime_log_base(
                 [
@@ -105,11 +106,22 @@ def run_runtime_log_checks(failures: list[str]) -> None:
                 [
                     "logcat.txt:10: 06-25 20:31:30.040 D/tmessages proxy_warmup state=cold decision=allow class=media_visible account=0 active=0 max=1",
                     "logcat.txt:11: 06-25 20:31:30.050 D/tmessages upload_getFile media_startup index=0",
-                    "logcat.txt:12: 06-25 20:31:30.060 D/tmessages proxy_warmup state=cold decision=delay class=stories_prefetch delay=1500",
+                    "logcat.txt:12: 06-25 20:31:30.060 D/tmessages proxy_warmup bucket_delay class=stories_prefetch account=0 count=3 delay=1500",
                 ],
                 [
                     "logcat.txt:43: 06-25 20:31:30.400 D/tmessages proxy_warmup state=usable decision=ramp class=media_prefetch active=2 max=4",
                 ],
+            ),
+            encoding="utf-8",
+        )
+        bad_warmup_churn.write_text(
+            runtime_log_base(
+                [
+                    "logcat.txt:10: 06-25 20:31:30.040 D/tmessages proxy_warmup state=warming decision=delay class=stories_prefetch account=0 delay=1500 endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army",
+                    "logcat.txt:11: 06-25 20:31:30.041 D/tmessages proxy_warmup state=warming decision=delay class=stories_prefetch account=0 delay=1500 endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army",
+                    "logcat.txt:12: 06-25 20:31:30.042 D/tmessages proxy_warmup state=warming decision=delay class=sticker_prefetch account=0 delay=1500 endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army",
+                    "logcat.txt:13: 06-25 20:31:30.043 D/tmessages proxy_warmup state=warming decision=delay class=sticker_prefetch account=0 delay=1500 endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army",
+                ]
             ),
             encoding="utf-8",
         )
@@ -119,6 +131,7 @@ def run_runtime_log_checks(failures: list[str]) -> None:
             (bad_tcp_gate, "tcp_connect_gate before first usable success"),
             (bad_story, "stories preload must not create network file requests before usable success"),
             (bad_sticker, "sticker preload must not create network file requests before usable success"),
+            (bad_warmup_churn, "proxy_warmup prefetch delays must be bucketed"),
         )
         for path, expected in cases:
             result = subprocess.run([sys.executable, str(RUNTIME_VERIFIER), str(path)], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
@@ -148,6 +161,9 @@ def main():
     stories = read(ROOT / "TMessagesProj/src/main/java/org/telegram/ui/Stories/StoriesController.java")
     all_checks = read(TOOLS / "check_mtproxy_all.py")
     verifier = read(RUNTIME_VERIFIER)
+    loader_delay = method_body(loader, "private boolean maybeDelayProxyStartupLoadFile")
+    media_delay = method_body(media, "private boolean delayProxyWarmupPrefetch")
+    stories_delay = method_body(stories, "private boolean delayProxyWarmupPrefetch")
     mark_usable = method_body(runtime, "public static void markConnectionUsable(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now)")
     mark_failure = method_body(runtime, "public static ProxyHealthStore.EndpointFailureResult markEndpointFailure")
 
@@ -207,6 +223,26 @@ def main():
         "ProxyWarmupGate must log explicit proxy_warmup allow/delay/release/ramp decisions",
         failures,
     )
+    require(
+        "DelayedBucket" in warmup
+        and "DelayedOperationScheduler" in warmup
+        and "delayedBuckets" in warmup
+        and "delayNetworkHeavyOperationIfNeeded" in warmup
+        and "bucket_delay" in warmup,
+        "ProxyWarmupGate must coalesce delayed prefetch operations into account/class/endpoint buckets and log bucket_delay",
+        failures,
+    )
+    for body, owner in (
+        (loader_delay, "FileLoader"),
+        (media_delay, "MediaDataController"),
+        (stories_delay, "StoriesController"),
+    ):
+        require(
+            "ProxyWarmupGate.delayNetworkHeavyOperationIfNeeded" in body
+            and "delayForNetworkHeavyOperation" not in body,
+            f"{owner} must enqueue proxy warmup prefetch delays through the coalesced bucket API",
+            failures,
+        )
     require(
         "ProxyWarmupGate.onProxyUsable" in mark_usable
         and "ProxyEndpointKey.liveStage(proxyInfo)" in mark_usable,

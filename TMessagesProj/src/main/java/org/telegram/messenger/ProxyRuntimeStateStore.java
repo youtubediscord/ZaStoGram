@@ -9,7 +9,13 @@ import java.util.Locale;
 
 public final class ProxyRuntimeStateStore {
     private static final long DNS_OUTAGE_WINDOW_MS = 60 * 1000L;
+    private static final long DNS_VISIBLE_DELAY_MS = 800L;
     private static final HashMap<String, DnsOutageState> dnsOutageStates = new HashMap<>();
+    private static long pendingDnsVisibleGeneration;
+    private static String pendingDnsVisibleEndpointKey = "";
+    private static String pendingDnsVisiblePhase = "";
+    private static int pendingDnsVisibleAccount = -1;
+    private static long pendingDnsVisibleStartedAtMs;
 
     private ProxyRuntimeStateStore() {
     }
@@ -22,12 +28,20 @@ public final class ProxyRuntimeStateStore {
         boolean concretePhase = ProxyPhasePolicy.isLivePhase(event.phase)
                 || (ProxyPhasePolicy.isFailure(event.phase) && !ProxyCheckDiagnostics.UNKNOWN_FAIL.equals(event.phase));
         boolean selectedAccountStage = event.account == UserConfig.selectedAccount;
+        if (concretePhase && ProxyHealthStore.shouldIgnoreEndpointTelemetry(event.endpointKey, event.timestamp)) {
+            clearPendingDnsVisiblePhase(event.endpointKey, event.timestamp);
+            logControl("decision=ignored_rotated_away source=" + event.source + " account=" + event.account + " phase=" + event.phase + " endpoint=" + event.endpointKey);
+            return Decision.ignored("ignored_rotated_away", event.phase, event.endpointKey);
+        }
         boolean stageTargetsCurrentProxy = currentProxy != null && concretePhase && ProxyEndpointKey.matchesLiveStage(currentProxy, event.endpointKey);
         if (!stageTargetsCurrentProxy) {
             if (selectedAccountStage && currentProxy != null && concretePhase) {
                 logControl("decision=ignored_stale_endpoint source=" + event.source + " account=" + event.account + " phase=" + event.phase + " endpoint=" + event.endpointKey + " current=" + ProxyEndpointKey.liveStage(currentProxy));
             }
             return Decision.ignored("ignored_stale_endpoint", event.phase, event.endpointKey);
+        }
+        if (!shouldDelayDnsVisiblePhase(event.phase)) {
+            clearPendingDnsVisiblePhase(event.endpointKey, event.timestamp);
         }
         ProxyWarmupGate.onProxyLivePhase(event.endpointKey, event.phase, event.timestamp);
         if (ProxyPhasePolicy.isProxyUsableSuccessPhase(event.phase)) {
@@ -64,6 +78,14 @@ public final class ProxyRuntimeStateStore {
             return new Decision("dns_outage_hold", event.phase, event.endpointKey, false, false, true);
         }
 
+        if (shouldDelayDnsVisiblePhase(event.phase)) {
+            if (selectedAccountStage) {
+                scheduleDnsVisiblePhase(currentProxy, event);
+            }
+            logControl("decision=telemetry_only source=" + event.source + " account=" + event.account + " phase=" + event.phase + " endpoint=" + event.endpointKey + " delay_ms=" + DNS_VISIBLE_DELAY_MS);
+            return new Decision("telemetry_only", event.phase, event.endpointKey, false, false, false);
+        }
+
         boolean visibleChanged = false;
         if (selectedAccountStage && ProxyPhasePolicy.canOverwriteVisible(event.phase)) {
             if (ProxyCheckDiagnostics.shouldKeepFreshFailure(currentProxy, event.phase)) {
@@ -84,6 +106,9 @@ public final class ProxyRuntimeStateStore {
         }
         ProxyHealthStore.EndpointFailureResult failure = ProxyHealthStore.rememberLiveFailure(currentProxy, event.phase, event.timestamp);
         if (ProxyPhasePolicy.canRotate(event.phase) && failure.rotationAllowed) {
+            ProxyHealthStore.quarantineExactEndpoint(currentProxy, event.phase, event.timestamp);
+            ProxyHealthStore.ignoreEndpointTelemetry(event.endpointKey, event.timestamp);
+            ProxyCheckScheduler.cancelEndpointAttempts(event.endpointKey);
             logControl("decision=rotation_trigger source=" + event.source + " account=" + event.account + " phase=" + event.phase + " endpoint=" + event.endpointKey);
             return new Decision("rotation_trigger", event.phase, event.endpointKey, true, visibleChanged, false);
         }
@@ -111,6 +136,67 @@ public final class ProxyRuntimeStateStore {
         return true;
     }
 
+    private static boolean shouldDelayDnsVisiblePhase(String phase) {
+        switch (ProxyCheckDiagnostics.normalize(phase)) {
+            case ProxyCheckDiagnostics.HOST_RESOLVE_START:
+            case ProxyCheckDiagnostics.DNS_COALESCE_WAIT:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static void scheduleDnsVisiblePhase(SharedConfig.ProxyInfo proxyInfo, ProxyConnectionEvent event) {
+        if (proxyInfo == null || event == null || event.endpointKey.length() == 0) {
+            return;
+        }
+        long generation = ++pendingDnsVisibleGeneration;
+        pendingDnsVisibleEndpointKey = event.endpointKey;
+        pendingDnsVisiblePhase = event.phase;
+        pendingDnsVisibleAccount = event.account;
+        pendingDnsVisibleStartedAtMs = event.timestamp;
+        AndroidUtilities.runOnUIThread(() -> promotePendingDnsVisiblePhase(generation), DNS_VISIBLE_DELAY_MS);
+    }
+
+    private static void promotePendingDnsVisiblePhase(long generation) {
+        if (generation != pendingDnsVisibleGeneration || pendingDnsVisibleEndpointKey.length() == 0) {
+            return;
+        }
+        SharedConfig.ProxyInfo currentProxy = SharedConfig.currentProxy;
+        String endpointKey = pendingDnsVisibleEndpointKey;
+        String phase = pendingDnsVisiblePhase;
+        int account = pendingDnsVisibleAccount;
+        long startedAtMs = pendingDnsVisibleStartedAtMs;
+        long now = SystemClock.elapsedRealtime();
+        if (currentProxy == null
+                || !ProxyEndpointKey.matchesTelemetryEndpointKey(currentProxy, endpointKey)
+                || !shouldDelayDnsVisiblePhase(phase)
+                || now - startedAtMs < DNS_VISIBLE_DELAY_MS
+                || currentProxy.lastCheckDiagnosticTime > startedAtMs
+                || ProxyHealthStore.hasFreshUsableSuccess(currentProxy, now)
+                || isCurrentProxyUsable(currentProxy, now)
+                || ProxyCheckDiagnostics.hasFreshFailure(currentProxy)) {
+            clearPendingDnsVisiblePhase(endpointKey, now);
+            return;
+        }
+        ProxyStatusMirror.mirrorVisiblePhase(currentProxy, phase, now);
+        logControl("decision=visible_delayed_dns source=" + ProxyConnectionEvent.SOURCE_NATIVE_STAGE + " account=" + account + " phase=" + phase + " endpoint=" + endpointKey + " delay_ms=" + (now - startedAtMs));
+        clearPendingDnsVisiblePhase(endpointKey, now);
+        NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.proxyConnectionStageChanged, phase, endpointKey);
+        AccountInstance.getInstance(account).getNotificationCenter().postNotificationName(NotificationCenter.proxyConnectionStageChanged, phase, endpointKey);
+    }
+
+    private static void clearPendingDnsVisiblePhase(String endpointKey, long now) {
+        if (pendingDnsVisibleEndpointKey.length() == 0 || !ProxyEndpointKey.sameTelemetryEndpointKey(pendingDnsVisibleEndpointKey, endpointKey)) {
+            return;
+        }
+        pendingDnsVisibleGeneration++;
+        pendingDnsVisibleEndpointKey = "";
+        pendingDnsVisiblePhase = "";
+        pendingDnsVisibleAccount = -1;
+        pendingDnsVisibleStartedAtMs = 0;
+    }
+
     public static boolean isFresh(SharedConfig.ProxyInfo proxyInfo) {
         return ProxyStatusMirror.isFresh(proxyInfo);
     }
@@ -132,8 +218,19 @@ public final class ProxyRuntimeStateStore {
     }
 
     private static boolean isCurrentProxyUsable(SharedConfig.ProxyInfo proxyInfo, long now) {
+        if (ProxyHealthStore.isEndpointRotatedAway(proxyInfo, now)) {
+            return false;
+        }
         return ProxyHealthStore.hasFreshUsableSuccess(proxyInfo, now)
                 || isConnectedCurrentProxy(UserConfig.selectedAccount, proxyInfo);
+    }
+
+    public static boolean isEndpointRotatedAway(SharedConfig.ProxyInfo proxyInfo) {
+        return ProxyHealthStore.isEndpointRotatedAway(proxyInfo, SystemClock.elapsedRealtime());
+    }
+
+    public static void clearRotatedAwayTelemetry() {
+        ProxyHealthStore.clearRotatedAwayTelemetry();
     }
 
     public static long usableSuccessRemainingMs(SharedConfig.ProxyInfo proxyInfo) {
@@ -168,6 +265,11 @@ public final class ProxyRuntimeStateStore {
             return;
         }
         long now = SystemClock.elapsedRealtime();
+        clearPendingDnsVisiblePhase(ProxyEndpointKey.liveStage(proxyInfo), now);
+        if (ProxyHealthStore.isEndpointRotatedAway(proxyInfo, now)) {
+            logControl("decision=ignored_rotated_away source=" + ProxyConnectionEvent.SOURCE_CONNECTED + " phase=" + ProxyCheckDiagnostics.OK + " endpoint=" + ProxyEndpointKey.liveStage(proxyInfo));
+            return;
+        }
         boolean changed = ProxyStatusMirror.isChecking(proxyInfo) || !ProxyStatusMirror.isAvailable(proxyInfo) || !ProxyStatusMirror.isFresh(proxyInfo);
         boolean preserveFreshProxyPhase = ProxyCheckDiagnostics.hasFreshFailure(proxyInfo) || ProxyHealthStore.hasFreshUsableSuccess(proxyInfo, now);
         if (!preserveFreshProxyPhase) {
@@ -185,6 +287,11 @@ public final class ProxyRuntimeStateStore {
             return;
         }
         long now = SystemClock.elapsedRealtime();
+        clearPendingDnsVisiblePhase(ProxyEndpointKey.liveStage(proxyInfo), now);
+        if (ProxyHealthStore.isEndpointRotatedAway(proxyInfo, now)) {
+            logControl("decision=ignored_rotated_away source=" + ProxyConnectionEvent.SOURCE_CONNECT_START + " phase=" + ProxyCheckDiagnostics.CONNECT_START + " endpoint=" + ProxyEndpointKey.liveStage(proxyInfo));
+            return;
+        }
         if (ProxyHealthStore.hasFreshUsableSuccess(proxyInfo, now)) {
             logControl("decision=held_live_by_usable_success source=" + ProxyConnectionEvent.SOURCE_CONNECT_START + " phase=" + ProxyCheckDiagnostics.CONNECT_START + " endpoint=" + ProxyEndpointKey.liveStage(proxyInfo) + " held_by=" + ProxyStatusMirror.diagnostic(proxyInfo));
             return;
@@ -206,6 +313,7 @@ public final class ProxyRuntimeStateStore {
             return;
         }
         String normalized = ProxyCheckDiagnostics.normalize(diagnostic);
+        clearPendingDnsVisiblePhase(ProxyEndpointKey.liveStage(proxyInfo), now);
         ProxyStatusMirror.markConnectionUsable(proxyInfo, normalized, now);
         ProxyHealthStore.clearEndpointBackoff(proxyInfo, normalized, now);
         ProxyStatusMirror.clearTransientState(proxyInfo);
@@ -218,6 +326,11 @@ public final class ProxyRuntimeStateStore {
         }
         long now = SystemClock.elapsedRealtime();
         String normalized = ProxyCheckDiagnostics.normalize(diagnostic);
+        clearPendingDnsVisiblePhase(ProxyEndpointKey.liveStage(proxyInfo), now);
+        if (ProxyHealthStore.isEndpointRotatedAway(proxyInfo, now)) {
+            logControl("decision=ignored_rotated_away source=live_failure phase=" + normalized + " endpoint=" + ProxyEndpointKey.liveStage(proxyInfo));
+            return ProxyHealthStore.EndpointFailureResult.noop(normalized);
+        }
         if (ProxyHealthStore.hasFreshUsableSuccess(proxyInfo, now)) {
             logControl("decision=held_by_usable_success source=live_failure phase=" + normalized + " endpoint=" + ProxyEndpointKey.liveStage(proxyInfo) + " held_by=" + ProxyStatusMirror.diagnostic(proxyInfo));
             return ProxyHealthStore.EndpointFailureResult.noop(normalized);
@@ -235,6 +348,9 @@ public final class ProxyRuntimeStateStore {
         }
         ProxyHealthStore.EndpointFailureResult failure = ProxyHealthStore.rememberLiveFailure(proxyInfo, normalized, now);
         if (ProxyPhasePolicy.canRotate(normalized) && failure.rotationAllowed) {
+            ProxyHealthStore.quarantineExactEndpoint(proxyInfo, normalized, now);
+            ProxyHealthStore.ignoreEndpointTelemetry(ProxyEndpointKey.liveStage(proxyInfo), now);
+            ProxyCheckScheduler.cancelEndpointAttempts(ProxyEndpointKey.liveStage(proxyInfo));
             logControl("decision=rotation_trigger source=live_failure phase=" + normalized + " endpoint=" + ProxyEndpointKey.liveStage(proxyInfo));
         } else if (ProxyPhasePolicy.canRotate(normalized)) {
             logControl("decision=held_by_failure_hysteresis source=live_failure phase=" + normalized + " endpoint=" + ProxyEndpointKey.liveStage(proxyInfo) + " failures=" + failure.rotationFailures);
@@ -312,6 +428,10 @@ public final class ProxyRuntimeStateStore {
     public static void rememberProxyCheckResult(int account, SharedConfig.ProxyInfo proxyInfo, long time, String displayDiagnostic) {
         String normalizedDiagnostic = ProxyCheckDiagnostics.normalize(displayDiagnostic);
         long now = SystemClock.elapsedRealtime();
+        if (ProxyHealthStore.isEndpointRotatedAway(proxyInfo, now)) {
+            logControl("decision=ignored_rotated_away source=" + ProxyConnectionEvent.SOURCE_PROXY_CHECK + " phase=" + normalizedDiagnostic + " endpoint=" + ProxyEndpointKey.liveStage(proxyInfo));
+            return;
+        }
         if (time != -1) {
             ProxyHealthStore.rememberConnected(proxyInfo, now);
             return;
@@ -334,6 +454,7 @@ public final class ProxyRuntimeStateStore {
                 && !ProxyCheckDiagnostics.hasFreshFailure(info)
                 && !ProxyCheckDiagnostics.hasFreshEndpointCooldown(info)
                 && !ProxyCheckDiagnostics.hasFreshUnresolvedLivePhase(info)
+                && !ProxyHealthStore.isEndpointRotatedAway(info, SystemClock.elapsedRealtime())
                 && !isEndpointBackedOff(info);
     }
 
@@ -367,6 +488,9 @@ public final class ProxyRuntimeStateStore {
                 : ProxyHealthStore.EndpointFailureResult.noop(normalized);
         boolean result = candidate && failure.rotationAllowed;
         if (result) {
+            ProxyHealthStore.quarantineExactEndpoint(currentProxy, normalized, now);
+            ProxyHealthStore.ignoreEndpointTelemetry(endpointKey, now);
+            ProxyCheckScheduler.cancelEndpointAttempts(endpointKey);
             logRotation("decision=trigger phase=" + normalized + " endpoint=" + endpointKey + " count=" + failure.rotationFailures + " required=" + ProxyHealthStore.punitiveFailuresToRotate());
         } else if (candidate) {
             logRotation("decision=waiting_hysteresis phase=" + normalized + " endpoint=" + endpointKey + " count=" + failure.rotationFailures + " required=" + ProxyHealthStore.punitiveFailuresToRotate());

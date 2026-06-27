@@ -1,6 +1,10 @@
 import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform
 
 apply plugin: 'com.android.library'
+// ZaStoGram plugin engine: embed CPython so .plugin scripts (exteraGram-compatible)
+// can run. Chaquopy may be applied to exactly one module per app; TMessagesProj is the
+// shared library, so every app flavor (Standalone/App/Huawei/...) inherits plugin support.
+apply plugin: 'com.chaquo.python'
 
 repositories {
     mavenCentral()
@@ -79,6 +83,12 @@ dependencies {
     }
     implementation 'com.google.android.recaptcha:recaptcha:18.7.1'
 
+    // ZaStoGram plugin engine: Pine — dynamic ART method hooking (Xposed-compatible API).
+    // Supports Android 4.4(ART)-15 on arm64/armv7. The :xposed module exposes
+    // XC_MethodHook (before/afterHookedMethod + MethodHookParam) used by the bridge.
+    implementation 'top.canyie.pine:core:0.3.0'
+    implementation 'top.canyie.pine:xposed:0.3.0'
+
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
 }
 
@@ -111,7 +121,7 @@ android {
 
 
     defaultConfig {
-        minSdkVersion 21
+        minSdkVersion 24 // ZaStoGram: Chaquopy (plugin engine) requires minSdk >= 24
         targetSdkVersion 35
 
         vectorDrawables.generatedDensities = ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi']
@@ -234,6 +244,21 @@ android {
     }
 
     namespace 'org.telegram.messenger'
+}
+
+// ZaStoGram plugin engine — Python runtime configuration.
+// Host API modules live in src/main/python (base_plugin, client_utils, ui.*, ...).
+// User .plugin scripts are loaded at runtime from the data dir, not bundled here.
+chaquopy {
+    defaultConfig {
+        version "3.11"               // matches exteraGram (Chaquopy 16, CPython 3.11)
+        // The build machine needs a CPython 3.11 on PATH. If Android Studio can't find
+        // it (common on Windows), uncomment and point at it explicitly:
+        // buildPython "C:/Users/<you>/AppData/Local/Programs/Python/Python311/python.exe"
+        pyc {
+            src false                // ship readable .py so plugin tracebacks map to real lines
+        }
+    }
 }
 
 
