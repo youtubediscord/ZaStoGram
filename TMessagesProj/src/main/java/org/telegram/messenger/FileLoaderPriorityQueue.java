@@ -11,6 +11,7 @@ public class FileLoaderPriorityQueue {
     String name;
     int type;
     int currentAccount;
+    private final FileLoader startupGate;
 
     public ArrayList<FileLoadOperation> allOperations = new ArrayList<>();
     public ArrayList<FileLoadOperation> tmpListOperations = new ArrayList<>();
@@ -28,8 +29,9 @@ public class FileLoaderPriorityQueue {
         checkOperationsScheduled = false;
     };
 
-    FileLoaderPriorityQueue(int currentAccount, String name, int type, DispatchQueue workerQueue) {
+    FileLoaderPriorityQueue(int currentAccount, FileLoader startupGate, String name, int type, DispatchQueue workerQueue) {
         this.currentAccount = currentAccount;
+        this.startupGate = startupGate;
         this.name = name;
         this.type = type;
         this.workerQueue = workerQueue;
@@ -88,8 +90,10 @@ public class FileLoaderPriorityQueue {
 
     private void checkLoadingOperationInternal() {
         int activeCount = 0;
+        int plannedProxyStartupStarts = 0;
         int lastPriority = 0;
         boolean pauseAllNextOperations = false;
+        boolean blockedByProxyStartupFanout = false;
         int max = type == TYPE_LARGE ? MessagesController.getInstance(currentAccount).largeQueueMaxActiveOperations : MessagesController.getInstance(currentAccount).smallQueueMaxActiveOperations;
         tmpListOperations.clear();
         for (int i = 0; i < allOperations.size(); i++) {
@@ -112,14 +116,20 @@ public class FileLoaderPriorityQueue {
 //                if (BuildVars.DEBUG_PRIVATE_VERSION)
 //                    FileLog.d("{"+name+"}.checkLoadingOperationInternal: #" + i + " "+operation.getFileName()+" priority="+operation.getPriority()+" isStory="+operation.isStory+" preFinished="+ operation.preFinished+" pauseAllNextOperations=" + pauseAllNextOperations + " max=" + max + " => skip");
                 continue;
-            } else if (!pauseAllNextOperations && i < max) {
+            } else if (!pauseAllNextOperations && i < max && canStartProxyStartupMediaOperation(operation, plannedProxyStartupStarts)) {
 //                if (BuildVars.DEBUG_PRIVATE_VERSION)
 //                    FileLog.d("{"+name+"}.checkLoadingOperationInternal: #" + i + " " +operation.getFileName()+" priority="+operation.getPriority()+" isStory="+operation.isStory+" preFinished="+ operation.preFinished+" pauseAllNextOperations=" + pauseAllNextOperations + " max=" + max + " => start");
                 tmpListOperations.add(operation);
                 activeCount++;
+                if (!operation.wasStarted()) {
+                    plannedProxyStartupStarts++;
+                }
             } else {
 //                if (BuildVars.DEBUG_PRIVATE_VERSION)
 //                    FileLog.d("{"+name+"}.checkLoadingOperationInternal: #" + i + " " +operation.getFileName()+" priority="+operation.getPriority()+" isStory="+operation.isStory+" preFinished="+ operation.preFinished+" pauseAllNextOperations=" + pauseAllNextOperations + " max=" + max + " => pause");
+                if (!pauseAllNextOperations && i < max) {
+                    blockedByProxyStartupFanout = true;
+                }
                 if (operation.wasStarted()) {
                     operation.pause();
                 }
@@ -129,6 +139,13 @@ public class FileLoaderPriorityQueue {
         for (int i = 0; i < tmpListOperations.size(); i++) {
             tmpListOperations.get(i).start();
         }
+        if (blockedByProxyStartupFanout && startupGate != null) {
+            startupGate.scheduleProxyStartupFanoutRecheck(this);
+        }
+    }
+
+    private boolean canStartProxyStartupMediaOperation(FileLoadOperation operation, int plannedStarts) {
+        return startupGate == null || startupGate.canStartProxyStartupMediaOperation(operation, plannedStarts);
     }
 
     public boolean remove(FileLoadOperation operation) {

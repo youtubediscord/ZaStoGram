@@ -6409,10 +6409,16 @@ public class MessagesController extends BaseController implements NotificationCe
             if (message.peer_id.channel_id == 0) {
                 MessageObject existMessageObject = dialogMessagesByIds.get(message.id);
                 if (existMessageObject != null) {
-                    existMessageObject.messageOwner.media = MessageObject.getMedia(message);
-                    if (MessageObject.getMedia(message).ttl_seconds != 0 && (MessageObject.getMedia(message).photo instanceof TLRPC.TL_photoEmpty || MessageObject.getMedia(message).document instanceof TLRPC.TL_documentEmpty)) {
-                        existMessageObject.setType();
-                        getNotificationCenter().postNotificationName(NotificationCenter.notificationsSettingsUpdated);
+                    TLRPC.MessageMedia zNewMedia = MessageObject.getMedia(message);
+                    boolean zEmptyEphemeral = ZaStoPrivacy.KEEP_EPHEMERAL && zNewMedia != null && zNewMedia.ttl_seconds != 0
+                            && (zNewMedia.photo instanceof TLRPC.TL_photoEmpty || zNewMedia.document instanceof TLRPC.TL_documentEmpty);
+                    if (!zEmptyEphemeral) {
+                        // ZaSto: ignore a server push that empties kept ephemeral media (keep showing the photo).
+                        existMessageObject.messageOwner.media = zNewMedia;
+                        if (zNewMedia != null && zNewMedia.ttl_seconds != 0 && (zNewMedia.photo instanceof TLRPC.TL_photoEmpty || zNewMedia.document instanceof TLRPC.TL_documentEmpty)) {
+                            existMessageObject.setType();
+                            getNotificationCenter().postNotificationName(NotificationCenter.notificationsSettingsUpdated);
+                        }
                     }
                 }
             }
@@ -10239,6 +10245,10 @@ public class MessagesController extends BaseController implements NotificationCe
         });
     }
 
+    private boolean canSendOnlinePresence() {
+        return currentAccount == UserConfig.selectedAccount;
+    }
+
     public void updateTimerProc() {
         long currentTime = System.currentTimeMillis();
 
@@ -10246,7 +10256,8 @@ public class MessagesController extends BaseController implements NotificationCe
         checkReadTasks();
 
         if (getUserConfig().isClientActivated()) {
-            if (!ignoreSetOnline && getConnectionsManager().getPauseTime() == 0 && ApplicationLoader.isScreenOn && !ApplicationLoader.mainInterfacePausedStageQueue) {
+            boolean allowOnlinePresence = canSendOnlinePresence();
+            if (allowOnlinePresence && !ignoreSetOnline && getConnectionsManager().getPauseTime() == 0 && ApplicationLoader.isScreenOn && !ApplicationLoader.mainInterfacePausedStageQueue) {
                 if (ApplicationLoader.mainInterfacePausedStageQueueTime != 0 && Math.abs(ApplicationLoader.mainInterfacePausedStageQueueTime - System.currentTimeMillis()) > 1000) {
                     if (statusSettingState != 1 && (lastStatusUpdateTime == 0 || Math.abs(System.currentTimeMillis() - lastStatusUpdateTime) >= 55000 || offlineSent)) {
                         statusSettingState = 1;
@@ -10271,7 +10282,7 @@ public class MessagesController extends BaseController implements NotificationCe
                         });
                     }
                 }
-            } else if (statusSettingState != 2 && !offlineSent && Math.abs(System.currentTimeMillis() - getConnectionsManager().getPauseTime()) >= 2000) {
+            } else if (statusSettingState != 2 && !offlineSent && (!allowOnlinePresence || Math.abs(System.currentTimeMillis() - getConnectionsManager().getPauseTime()) >= 2000)) {
                 statusSettingState = 2;
                 if (statusRequest != 0) {
                     getConnectionsManager().cancelRequest(statusRequest, true);
@@ -10582,6 +10593,20 @@ public class MessagesController extends BaseController implements NotificationCe
     private long lastCheckPromoInfoTime;
 
     private void checkPromoInfoInternal(boolean reset) {
+        if (ZaStoPrivacy.DISABLE_ADS) {
+            if (checkingPromoInfoRequestId != 0) {
+                getConnectionsManager().cancelRequest(checkingPromoInfoRequestId, true);
+                checkingPromoInfoRequestId = 0;
+            }
+            checkingPromoInfo = false;
+            lastCheckPromoId++;
+            promoDialogId = 0;
+            proxyDialogAddress = null;
+            nextPromoInfoCheckTime = getConnectionsManager().getCurrentTime() + 24 * 60 * 60;
+            getGlobalMainSettings().edit().putLong("proxy_dialog", promoDialogId).remove("proxyDialogAddress").putInt("nextPromoInfoCheckTime", nextPromoInfoCheckTime).commit();
+            AndroidUtilities.runOnUIThread(this::removePromoDialog);
+            return;
+        }
         if (reset && checkingPromoInfo) {
             checkingPromoInfo = false;
         }
@@ -10887,6 +10912,11 @@ public class MessagesController extends BaseController implements NotificationCe
     }
 
     public boolean isPromoDialog(long did, boolean checkLeft) {
+        if (ZaStoPrivacy.DISABLE_ADS) return false;
+        return isAnyPromoDialog(did, checkLeft);
+    }
+
+    public boolean isAnyPromoDialog(long did, boolean checkLeft) {
         return promoDialog != null && promoDialog.id == did && (!checkLeft || isLeftPromoChannel);
     }
 
@@ -11869,8 +11899,8 @@ public class MessagesController extends BaseController implements NotificationCe
                 // ZaSto anti-delete: restore the "deleted by sender" mark on load. Pick the right id-space —
                 // channels use a per-channel mid space (key = dialogId = -channelId), everything else uses key 0 —
                 // so we never false-positive a channel message against the global set.
-                boolean zastoIsChannel = ChatObject.isChannel(getChat(-dialogId));
-                java.util.Set<Integer> zastoDeleted = ZaStoDeletedStore.get(currentAccount, zastoIsChannel ? dialogId : 0);
+                boolean zastoOwnKey = ChatObject.isChannel(getChat(-dialogId)) || DialogObject.isEncryptedDialog(dialogId);
+                java.util.Set<Integer> zastoDeleted = ZaStoDeletedStore.get(currentAccount, zastoOwnKey ? dialogId : 0);
                 if (!zastoDeleted.isEmpty()) {
                     for (int zi = 0, zn = objects.size(); zi < zn; zi++) {
                         MessageObject zobj = objects.get(zi);
@@ -20937,6 +20967,10 @@ public class MessagesController extends BaseController implements NotificationCe
     }
 
     public SponsoredMessagesInfo getSponsoredMessages(long dialogId) {
+        if (ZaStoPrivacy.DISABLE_ADS) {
+            sponsoredMessages.remove(dialogId);
+            return null;
+        }
         SponsoredMessagesInfo info = sponsoredMessages.get(dialogId);
         if (info != null && (info.loading || Math.abs(SystemClock.elapsedRealtime() - info.loadTime) <= 5 * 60 * 1000)) {
             return info;
@@ -21641,7 +21675,7 @@ public class MessagesController extends BaseController implements NotificationCe
             if ((getDialogUnreadCount(d) != 0 || d.unread_mark) && !isDialogMuted(d.id, 0)) {
                 unreadUnmutedDialogs++;
             }
-            if (promoDialog != null && d.id == promoDialog.id && isLeftPromoChannel) {
+            if (promoDialog != null && d.id == promoDialog.id && (isLeftPromoChannel || ZaStoPrivacy.DISABLE_ADS)) {
                 allDialogs.remove(a);
                 a--;
                 N--;
@@ -21649,7 +21683,7 @@ public class MessagesController extends BaseController implements NotificationCe
             }
             addDialogToItsFolder(-1, d);
         }
-        if (promoDialog != null && isLeftPromoChannel) {
+        if (!ZaStoPrivacy.DISABLE_ADS && promoDialog != null && isLeftPromoChannel) {
             allDialogs.add(0, promoDialog);
             addDialogToItsFolder(-2, promoDialog);
         }
@@ -23422,6 +23456,7 @@ public class MessagesController extends BaseController implements NotificationCe
     }
 
     public boolean isSponsoredDisabled() {
+        if (ZaStoPrivacy.DISABLE_ADS) return true;
         TLRPC.UserFull userFull = getUserFull(getUserConfig().getClientUserId());
         if (userFull == null) return false;
         return !userFull.sponsored_enabled;

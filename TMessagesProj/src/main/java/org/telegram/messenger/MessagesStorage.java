@@ -13687,6 +13687,12 @@ public class MessagesStorage extends BaseController {
                     for (int a = 0, N = dialogs.size(); a < N; a++) {
                         long dialogId = dialogs.keyAt(a);
                         ArrayList<Integer> mids = dialogs.valueAt(a);
+                        if (ZaStoPrivacy.KEEP_DELETED) {
+                            // ZaSto anti-delete: keep secret-chat messages the peer deletes; mark instead of purge.
+                            ZaStoDeletedStore.mark(currentAccount, dialogId, mids);
+                            AndroidUtilities.runOnUIThread(() -> getNotificationCenter().postNotificationName(NotificationCenter.zastoMessagesMarkedDeleted, mids, 0L));
+                            continue;
+                        }
                         AndroidUtilities.runOnUIThread(() -> getNotificationCenter().postNotificationName(NotificationCenter.messagesDeleted, mids, 0L, false));
                         updateDialogsWithReadMessagesInternal(mids, null, null, null, null);
                         markMessagesAsDeletedInternal(dialogId, mids, true, 0, 0);
@@ -15461,10 +15467,6 @@ public class MessagesStorage extends BaseController {
                                     TLRPC.Message oldMessage = TLRPC.Message.TLdeserialize(data, data.readInt32(false), false);
                                     oldMessage.readAttachPath(data, getUserConfig().clientUserId);
                                     data.reuse();
-                                    if (ZaStoPrivacy.KEEP_EDIT_HISTORY && !message.out) {
-                                        // ZaSto: keep the previous version of an incoming edited message.
-                                        ZaStoEditHistoryStore.recordEdit(currentAccount, MessageObject.getDialogId(message), oldMessage, message);
-                                    }
                                     if (reactionUpdates != null) {
                                         reactionUpdates.add(new SavedReactionsUpdate(selfId, oldMessage, message));
                                     }
@@ -15485,10 +15487,31 @@ public class MessagesStorage extends BaseController {
                                     } else if (MessageObject.getDocument(oldMessage) != null && MessageObject.getDocument(message) != null) {
                                         sameMedia = MessageObject.getDocument(oldMessage).id == MessageObject.getDocument(message).id;
                                     }
+                                    boolean zastoKeepMedia = false;
+                                    if (ZaStoPrivacy.KEEP_EPHEMERAL && !sameMedia
+                                            && (oldMessage.media instanceof TLRPC.TL_messageMediaPhoto && oldMessage.media.photo instanceof TLRPC.TL_photo
+                                                || oldMessage.media instanceof TLRPC.TL_messageMediaDocument && oldMessage.media.document instanceof TLRPC.TL_document)
+                                            && (message.media == null || message.media instanceof TLRPC.TL_messageMediaEmpty
+                                                || message.media instanceof TLRPC.TL_messageMediaPhoto && message.media.photo instanceof TLRPC.TL_photoEmpty
+                                                || message.media instanceof TLRPC.TL_messageMediaDocument && message.media.document instanceof TLRPC.TL_documentEmpty)) {
+                                        // ZaSto: a server edit is stripping the media of a kept ephemeral message — keep the original media + file.
+                                        message.media = oldMessage.media;
+                                        message.attachPath = oldMessage.attachPath;
+                                        zastoKeepMedia = true;
+                                    }
                                     if (oldMessage.out && !message.out) {
                                         message.out = oldMessage.out;
                                     }
-                                    if (!sameMedia) {
+                                    // ZaSto edit-history: an incoming edit replaced real media — keep the old file on disk
+                                    // (skip its deletion) and record the previous version (with the old media) for the history viewer.
+                                    boolean zastoKeepEditMedia = ZaStoPrivacy.KEEP_EDIT_HISTORY && !message.out && !sameMedia && !zastoKeepMedia
+                                            && (oldMessage.media instanceof TLRPC.TL_messageMediaPhoto && oldMessage.media.photo instanceof TLRPC.TL_photo
+                                                || oldMessage.media instanceof TLRPC.TL_messageMediaDocument && oldMessage.media.document instanceof TLRPC.TL_document);
+                                    if (ZaStoPrivacy.KEEP_EDIT_HISTORY && !message.out) {
+                                        // Incoming edits captured here; OWN edits are captured at send time in SendMessagesHelper.editMessage.
+                                        ZaStoEditHistoryStore.recordEdit(currentAccount, MessageObject.getDialogId(message), oldMessage, message, !sameMedia && !zastoKeepMedia);
+                                    }
+                                    if (!sameMedia && !zastoKeepMedia && !zastoKeepEditMedia) {
                                         addFilesToDelete(oldMessage, filesToDelete, idsToDelete, namesToDelete, false);
                                     }
                                     NativeByteBuffer customParams = cursor.byteBufferValue(6);

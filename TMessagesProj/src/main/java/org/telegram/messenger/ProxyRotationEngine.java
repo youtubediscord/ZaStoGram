@@ -70,7 +70,7 @@ final class ProxyRotationEngine {
             generation++;
             return SwitchDecision.stale("stale_endpoint");
         }
-        if (ProxyRuntimeStateStore.hasFreshUsableSuccess(currentProxy)) {
+        if (ProxyRuntimeStateStore.isCurrentProxyUsable(currentProxy)) {
             attempt.terminal = true;
             scheduledAttempt = null;
             generation++;
@@ -80,7 +80,11 @@ final class ProxyRotationEngine {
         attempt.terminal = true;
         scheduledAttempt = null;
         if (ProxyCheckDiagnostics.CONNECTING_TIMEOUT.equals(attempt.reason)) {
-            ProxyRuntimeStateStore.markEndpointFailure(currentProxy, ProxyCheckDiagnostics.CONNECTING_TIMEOUT);
+            ProxyHealthStore.EndpointFailureResult failure = ProxyRuntimeStateStore.markEndpointFailure(currentProxy, ProxyCheckDiagnostics.CONNECTING_TIMEOUT);
+            if (!failure.rotationAllowed) {
+                generation++;
+                return SwitchDecision.held("held_by_failure_hysteresis", 0);
+            }
         }
         return selectSwitchCandidate(currentProxy, now);
     }

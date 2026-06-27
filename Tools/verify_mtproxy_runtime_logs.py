@@ -15,6 +15,9 @@ from pathlib import Path
 
 REASON_RE = re.compile(r"(?<![A-Za-z0-9_])reason=([^ ]+)")
 CONNECTION_RE = re.compile(r"connection\((0x[0-9a-fA-F]+)\)")
+LOG_TIME_RE = re.compile(r"\b(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})\.(\d{3})\b")
+PROXY_CONTROL_RE = re.compile(r"proxy_control decision=([^ ]+)")
+FIELD_RE_TEMPLATE = r"(?<![A-Za-z0-9_]){}=([^ ]+)"
 DISCONNECT_REQUIRED_FIELDS = (
     "transport_state=",
     "epoll_registered=",
@@ -22,6 +25,37 @@ DISCONNECT_REQUIRED_FIELDS = (
     "tcp_gate_active=",
 )
 ALLOWED_DATA_PATH_REASONS = {"first_tls_app_recv", "first_mtproxy_packet_recv"}
+USABLE_SUCCESS_PROXY_PHASES = {"first_tls_app_recv", "first_mtproxy_packet_recv"}
+VISIBLE_SUCCESS_HOLD_MS = 45 * 1000
+LIVE_VISIBLE_OVERWRITE_PHASES = {
+    "dns_cache_hit",
+    "dns_cache_store",
+    "dns_coalesce_wait",
+    "connect_start",
+    "socket_connect_start",
+    "tcp_connect_gate",
+    "socket_connected",
+    "client_hello_sent",
+    "server_hello_hmac_ok",
+    "on_connected",
+    "first_tls_app_sent",
+    "admission_queue",
+    "endpoint_cooldown",
+    "host_resolve_start",
+}
+PUNITIVE_ROTATION_PHASES = {
+    "tcp_not_connected",
+    "host_resolve_failed",
+    "host_resolve_timeout",
+    "tcp_connected_no_pong",
+    "client_hello_sent_no_server_hello",
+    "server_hello_hmac_mismatch",
+    "mtproxy_packet_sent_no_response",
+    "post_handshake_no_appdata",
+    "dropped_early_after_appdata",
+}
+ROTATION_HYSTERESIS_WINDOW_MS = 30 * 1000
+ROTATION_FAILURES_TO_TRIGGER = 2
 
 
 def resolve_markers_path(path: Path) -> Path:
@@ -48,6 +82,28 @@ def line_connection(line: str) -> str:
     return match.group(1) if match else ""
 
 
+def line_time_ms(line: str) -> int | None:
+    match = LOG_TIME_RE.search(line)
+    if not match:
+        return None
+    month, day, hour, minute, second, millis = (int(part) for part in match.groups())
+    return (((month * 31 + day) * 24 + hour) * 60 * 60 + minute * 60 + second) * 1000 + millis
+
+
+def line_field(line: str, name: str) -> str:
+    match = re.search(FIELD_RE_TEMPLATE.format(re.escape(name)), line)
+    return match.group(1) if match else ""
+
+
+def proxy_control_decision(line: str) -> str:
+    match = PROXY_CONTROL_RE.search(line)
+    return match.group(1) if match else ""
+
+
+def same_proxy_endpoint(left: str, right: str) -> bool:
+    return bool(left and right and (left == right or left.startswith(right) or right.startswith(left)))
+
+
 def has_prior_connection_marker(lines: list[str], index: int, connection: str, marker: str) -> bool:
     for candidate in lines[:index]:
         if marker not in candidate:
@@ -56,6 +112,80 @@ def has_prior_connection_marker(lines: list[str], index: int, connection: str, m
             continue
         return True
     return False
+
+
+def verify_visible_success_hold(lines: list[str]) -> list[str]:
+    failures: list[str] = []
+    usable_successes: list[tuple[int | None, str, str]] = []
+    for line in lines:
+        decision = proxy_control_decision(line)
+        if not decision:
+            continue
+        phase = line_field(line, "phase")
+        endpoint = line_field(line, "endpoint")
+        if decision == "visible_usable_success" and phase in USABLE_SUCCESS_PROXY_PHASES:
+            usable_successes.append((line_time_ms(line), endpoint, line))
+            continue
+        if decision != "visible_only" or phase not in LIVE_VISIBLE_OVERWRITE_PHASES:
+            continue
+        current_time = line_time_ms(line)
+        for success_time, success_endpoint, success_line in usable_successes:
+            if not same_proxy_endpoint(success_endpoint, endpoint):
+                continue
+            if success_time is not None and current_time is not None and current_time - success_time > VISIBLE_SUCCESS_HOLD_MS:
+                continue
+            failures.append(
+                "visible usable success overwritten by live visible_only within 45s: "
+                f"{line} after {success_line}"
+            )
+            break
+    return failures
+
+
+def verify_rotation_hysteresis(lines: list[str]) -> list[str]:
+    failures: list[str] = []
+    usable_successes: list[tuple[int | None, str, str]] = []
+    for line in lines:
+        if proxy_control_decision(line) == "visible_usable_success" and line_field(line, "phase") in USABLE_SUCCESS_PROXY_PHASES:
+            usable_successes.append((line_time_ms(line), line_field(line, "endpoint"), line))
+            continue
+        if "proxy_rotation decision=trigger" not in line:
+            continue
+        phase = line_field(line, "phase")
+        endpoint = line_field(line, "endpoint")
+        current_time = line_time_ms(line)
+        if phase not in PUNITIVE_ROTATION_PHASES:
+            failures.append(f"proxy_rotation trigger from non-punitive phase: {line}")
+            continue
+        count_text = line_field(line, "count")
+        try:
+            count = int(count_text)
+        except ValueError:
+            count = 0
+        if count < ROTATION_FAILURES_TO_TRIGGER:
+            failures.append(f"proxy_rotation trigger before hysteresis count reached {ROTATION_FAILURES_TO_TRIGGER}: {line}")
+        for success_time, success_endpoint, success_line in usable_successes:
+            if not same_proxy_endpoint(success_endpoint, endpoint):
+                continue
+            if success_time is not None and current_time is not None and current_time - success_time > VISIBLE_SUCCESS_HOLD_MS:
+                continue
+            failures.append(f"proxy_rotation trigger held by fresh usable success: {line} after {success_line}")
+            break
+        previous_punitive = False
+        for candidate in lines:
+            if candidate == line:
+                break
+            if "proxy_rotation decision=waiting_hysteresis" not in candidate:
+                continue
+            if line_field(candidate, "phase") != phase or not same_proxy_endpoint(line_field(candidate, "endpoint"), endpoint):
+                continue
+            candidate_time = line_time_ms(candidate)
+            if candidate_time is not None and current_time is not None and current_time - candidate_time > ROTATION_HYSTERESIS_WINDOW_MS:
+                continue
+            previous_punitive = True
+        if not previous_punitive:
+            failures.append(f"proxy_rotation trigger without a prior punitive waiting_hysteresis inside 30s: {line}")
+    return failures
 
 
 def verify_lines(lines: list[str]) -> list[str]:
@@ -102,6 +232,9 @@ def verify_lines(lines: list[str]) -> list[str]:
         missing = [field for field in DISCONNECT_REQUIRED_FIELDS if field not in line]
         if missing:
             failures.append(f"mtproxy_disconnect missing invariant fields {','.join(missing)}: {line}")
+
+    failures.extend(verify_visible_success_hold(lines))
+    failures.extend(verify_rotation_hysteresis(lines))
 
     return failures
 

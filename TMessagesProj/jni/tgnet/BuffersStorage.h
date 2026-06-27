@@ -10,6 +10,7 @@
 #define BUFFERSSTORAGE_H
 
 #include <vector>
+#include <map>
 #include <pthread.h>
 #include <stdint.h>
 
@@ -31,6 +32,7 @@ private:
     std::vector<NativeByteBuffer *> freeBuffers16384;
     std::vector<NativeByteBuffer *> freeBuffers32768;
     std::vector<NativeByteBuffer *> freeBuffersBig;
+    std::map<uint32_t, int64_t> lastPressureLogByCapacity;
     bool isThreadSafe = true;
     pthread_mutex_t mutex;
 };

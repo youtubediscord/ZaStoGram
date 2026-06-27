@@ -36,6 +36,29 @@ public final class ProxyPhasePolicy {
         return classify(phase).canRotate;
     }
 
+    public static boolean isPunitiveFailure(String phase) {
+        switch (ProxyCheckDiagnostics.normalize(phase)) {
+            case ProxyCheckDiagnostics.TCP_NOT_CONNECTED:
+            case ProxyCheckDiagnostics.HOST_RESOLVE_FAILED:
+            case ProxyCheckDiagnostics.HOST_RESOLVE_TIMEOUT:
+            case ProxyCheckDiagnostics.TCP_CONNECTED_NO_PONG:
+            case ProxyCheckDiagnostics.CLIENT_HELLO_SENT_NO_SERVER_HELLO:
+            case ProxyCheckDiagnostics.SERVER_HELLO_HMAC_MISMATCH:
+            case ProxyCheckDiagnostics.MTPROXY_PACKET_SENT_NO_RESPONSE:
+            case ProxyCheckDiagnostics.POST_HANDSHAKE_NO_APPDATA:
+            case ProxyCheckDiagnostics.DROPPED_EARLY_AFTER_APPDATA:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    public static boolean isLocalOrLiveNonPunitive(String phase) {
+        return isLivePhase(phase)
+                || !canBackoff(phase)
+                || !canRotate(phase);
+    }
+
     public static boolean canOverwriteVisible(String phase) {
         return classify(phase).canOverwriteVisible;
     }

@@ -10,6 +10,25 @@
 #include "FileLog.h"
 #include "NativeByteBuffer.h"
 
+#include <time.h>
+
+namespace {
+const int64_t BUFFER_POOL_PRESSURE_LOG_INTERVAL_MS = 1000;
+
+uint32_t bufferPoolMaxCountForCapacity(uint32_t capacity) {
+    if (capacity == 8 || capacity == 128 || capacity == 1024 + 200) {
+        return 80;
+    }
+    return 10;
+}
+
+int64_t bufferPoolMonotonicMillis() {
+    struct timespec timeSpec;
+    clock_gettime(CLOCK_MONOTONIC, &timeSpec);
+    return (int64_t) timeSpec.tv_sec * 1000 + timeSpec.tv_nsec / 1000000;
+}
+}
+
 BuffersStorage &BuffersStorage::getInstance() {
     static BuffersStorage instance(true);
     return instance;
@@ -86,13 +105,11 @@ void BuffersStorage::reuseFreeBuffer(NativeByteBuffer *buffer) {
     }
     std::vector<NativeByteBuffer *> *arrayToReuse = nullptr;
     uint32_t capacity = buffer->capacity();
-    uint32_t maxCount = 10;
+    uint32_t maxCount = bufferPoolMaxCountForCapacity(capacity);
     if (capacity == 8) {
         arrayToReuse = &freeBuffers8;
-        maxCount = 80;
     } else if (capacity == 128) {
         arrayToReuse = &freeBuffers128;
-        maxCount = 80;
     } else if (capacity == 1024 + 200) {
         arrayToReuse = &freeBuffers1024;
     } else if (capacity == 4096 + 200) {
@@ -111,7 +128,14 @@ void BuffersStorage::reuseFreeBuffer(NativeByteBuffer *buffer) {
         if (arrayToReuse->size() < maxCount) {
             arrayToReuse->push_back(buffer);
         } else {
-            if (LOGS_ENABLED) DEBUG_D("too much %d buffers", capacity);
+            if (LOGS_ENABLED) {
+                int64_t now = bufferPoolMonotonicMillis();
+                int64_t lastLogTime = lastPressureLogByCapacity[capacity];
+                if (lastLogTime == 0 || now - lastLogTime >= BUFFER_POOL_PRESSURE_LOG_INTERVAL_MS) {
+                    lastPressureLogByCapacity[capacity] = now;
+                    DEBUG_D("buffer_pool_pressure capacity=%u cached=%u limit=%u", capacity, (uint32_t) arrayToReuse->size(), maxCount);
+                }
+            }
             delete buffer;
         }
         if (isThreadSafe) {

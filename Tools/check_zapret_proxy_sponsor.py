@@ -73,8 +73,8 @@ def main() -> int:
     )
 
     require(
-        "VIEW_TYPE_ZAPRET_VPN_SPONSOR" not in dialogs_adapter,
-        "Sponsor must not use a synthetic view type",
+        "VIEW_TYPE_ZAPRET_VPN_SPONSOR" in dialogs_adapter,
+        "Sponsor must use a stable dedicated item type",
     )
     require(
         "shouldShowZapretVpnSponsor()" in dialogs_adapter,
@@ -90,10 +90,10 @@ def main() -> int:
         "DialogsAdapter must remove the legacy Telegram proxy promo dialog",
     )
     require(
-        "promoteZapretVpnSponsorDialog(" in dialogs_adapter
-        and ("isArchiveDialog(dialog)" in dialogs_adapter or "isArchiveDialog(item.dialog)" in dialogs_adapter)
-        and "result.add(sponsorDialog)" in dialogs_adapter,
-        "DialogsAdapter must promote the real sponsor dialog below the archive row when archive exists",
+        "removeZapretVpnSponsorDialogFromArray(" in dialogs_adapter
+        and "insertZapretVpnSponsorItem(" in dialogs_adapter
+        and "isArchiveDialog(item.dialog)" in dialogs_adapter,
+        "DialogsAdapter must keep a separate sponsor item below the archive row without replacing chats",
     )
     require(
         "SharedConfig.showZapretVpnSponsor" in dialogs_adapter,
@@ -115,9 +115,13 @@ def main() -> int:
     )
     require(
         "getUserNameResolver().resolve(ZAPRET_VPN_SPONSOR_USERNAME" in dialogs_adapter
-        and "new TLRPC.TL_dialog()" in dialogs_adapter
         and "messagesController.dialogs_dict.get(dialogId)" in dialogs_adapter,
-        "DialogsAdapter must resolve the username and build a real dialog placeholder only from a real peer",
+        "DialogsAdapter must resolve the username and prefer an existing real dialog",
+    )
+    require(
+        "cell.setDialog(sponsorDialog, dialogsType, folderId)" in dialogs_adapter
+        and "cell.setDialog(zapretVpnSponsorDialogId, null, 0, false, false)" in dialogs_adapter,
+        "Sponsor row must bind either the real dialog or the resolved real peer, never a placeholder dialog",
     )
     require(
         "isZapretVpnSponsorDialog(position)" in dialogs_activity
@@ -139,6 +143,16 @@ def main() -> int:
     require(
         dialog_cell.count("customDialog = null;") >= 4,
         "DialogCell real chat/topic setters must clear recycled custom-dialog state",
+    )
+    real_dialog_start = dialog_cell.find("public void setDialog(TLRPC.Dialog dialog, int type, int folder)")
+    real_dialog_end = dialog_cell.find("protected boolean drawLock2()", real_dialog_start)
+    real_dialog_body = dialog_cell[real_dialog_start:real_dialog_end]
+    require(
+        "forumTopic = null;" in real_dialog_body
+        and "isTopic = false;" in real_dialog_body
+        and "isForum = false;" in real_dialog_body
+        and "groupMessages = null;" in real_dialog_body,
+        "DialogCell real dialog binding must clear recycled topic/folder state",
     )
 
     require(

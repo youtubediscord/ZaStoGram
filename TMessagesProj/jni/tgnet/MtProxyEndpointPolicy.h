@@ -72,6 +72,7 @@ public:
     static void recordHandshakeOk(const MtProxyEndpointContext &context, const char *reason);
     static DataPathSuccessResult recordDataPathSuccess(const MtProxyEndpointContext &context, const char *reason, int64_t now);
     static int32_t recipeLevelForEndpoint(const std::string &endpointKey);
+    static std::string lastRecipeDiagnosticForEndpoint(const std::string &endpointKey);
     static void resetStateForKey(const std::string &key, int64_t now, bool resetRecipe);
 };
 

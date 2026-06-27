@@ -692,6 +692,13 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
 
     public void setDialog(TLRPC.Dialog dialog, int type, int folder) {
         customDialog = null;
+        forumTopic = null;
+        isTopic = false;
+        isForum = false;
+        groupMessages = null;
+        message = null;
+        titleOverride = null;
+        useMeForMyMessages = false;
         if (currentDialogId != dialog.id) {
             if (statusDrawableAnimator != null) {
                 statusDrawableAnimator.removeAllListeners();
@@ -811,6 +818,12 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
 
     public void setDialog(long dialog_id, MessageObject messageObject, int date, boolean useMe, boolean animated) {
         customDialog = null;
+        currentDialogFolderId = 0;
+        forumTopic = null;
+        isTopic = false;
+        isForum = false;
+        groupMessages = null;
+        titleOverride = null;
         if (currentDialogId != dialog_id) {
             lastStatusDrawableParams = -1;
         }
@@ -836,6 +849,11 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
 
     public void setDialog(long dialog_id, MessageObject messageObject, ArrayList<MessageObject> groupMessageObject, int date, boolean useMe, boolean animated) {
         customDialog = null;
+        currentDialogFolderId = 0;
+        forumTopic = null;
+        isTopic = false;
+        isForum = false;
+        titleOverride = null;
         if (currentDialogId != dialog_id) {
             lastStatusDrawableParams = -1;
         }

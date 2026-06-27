@@ -4696,7 +4696,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             }
         });
 
-        if (!isArchive() && initialDialogsType == DIALOGS_TYPE_DEFAULT) {
+        if (!isArchive() && initialDialogsType == DIALOGS_TYPE_DEFAULT && !shouldHideMainScreenStories()) {
             if (MessagesController.getInstance(currentAccount).getMainSettings().getBoolean("storyhint", true)) {
                 storyHint = new HintView2(context, HintView2.DIRECTION_RIGHT)
                         .setRounding(8)
@@ -7234,7 +7234,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 showArchiveHelp();
             }
         }
-        if (canShowStoryHint && !storyHintShown && storyHint != null && storiesEnabled) {
+        if (canShowStoryHint && !storyHintShown && storyHint != null && storiesEnabled && !shouldHideMainScreenStories()) {
             storyHintShown = true;
             canShowStoryHint = false;
             storyHint.show();
@@ -8650,12 +8650,16 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
 
     private void updateFloatingButtonVisibility(boolean animated) {
         final boolean isVisible = !(onlySelect && initialDialogsType != 10 || folderId != 0 || inPreviewMode || (searching && !onlySelect) || floatingButtonHidden);
+        final boolean hideMainScreenStories = shouldHideMainScreenStories();
 
         if (floatingButton3 != null) {
             floatingButton3.setButtonVisible(isVisible, animated);
         }
         if (floatingButtonStories != null) {
-            floatingButtonStories.setButtonVisible(isVisible, animated);
+            floatingButtonStories.setButtonVisible(isVisible && !hideMainScreenStories, animated);
+        }
+        if (hideMainScreenStories && storyHint != null) {
+            storyHint.hide();
         }
     }
 
@@ -8676,6 +8680,10 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
     }
 
     public boolean storiesEnabled = true;
+    private boolean shouldHideMainScreenStories() {
+        return !isArchive() && MessagesController.getGlobalMainSettings().getBoolean("hide_main_screen_stories", false);
+    }
+
     private void updateStoriesPosting() {
         final boolean storiesEnabled = getMessagesController().storiesEnabled();
         if (this.storiesEnabled != storiesEnabled) {
@@ -10596,6 +10604,8 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             updateVisibleRows(0);
         } else if (id == NotificationCenter.storiesEnabledUpdate) {
             updateStoriesPosting();
+            updateStoriesVisibility(wasDrawn);
+            updateFloatingButtonVisibility(wasDrawn);
         } else if (id == NotificationCenter.unconfirmedAuthUpdate) {
             updateDialogsHint();
         } else if (id == NotificationCenter.premiumPromoUpdated) {
@@ -12488,9 +12498,13 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         if (StoryRecorder.isVisible() || (getLastStoryViewer() != null && getLastStoryViewer().isFullyVisible())) {
             animated = false;
         }
+        boolean hideMainScreenStories = shouldHideMainScreenStories();
         boolean onlySelfStories = !isArchive() && getStoriesController().hasOnlySelfStories();
         boolean newVisibility;
-        if (isArchive()) {
+        if (hideMainScreenStories) {
+            newVisibility = false;
+            onlySelfStories = false;
+        } else if (isArchive()) {
             newVisibility = !getStoriesController().getHiddenList().isEmpty();
         } else {
             newVisibility = !onlySelfStories && getStoriesController().hasStories();

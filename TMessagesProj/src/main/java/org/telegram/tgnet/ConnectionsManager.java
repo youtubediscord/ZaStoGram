@@ -6,8 +6,10 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.InstallSourceInfo;
 import android.content.pm.PackageInfo;
+import android.net.DnsResolver;
 import android.os.AsyncTask;
 import android.os.Build;
+import android.os.CancellationSignal;
 import android.os.SystemClock;
 import android.text.TextUtils;
 import android.util.Base64;
@@ -62,6 +64,7 @@ import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 import java.net.URL;
 import java.net.URLConnection;
+import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
@@ -71,12 +74,14 @@ import java.util.Objects;
 import java.util.TimeZone;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import javax.net.ssl.SSLException;
 
@@ -122,6 +127,7 @@ public class ConnectionsManager extends BaseController {
     public final static int MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID = 4;
     public final static int MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP = 5;
     public final static int MT_PROXY_TLS_PROFILE_AUTO_ROTATE = 6;
+    public final static int MT_PROXY_TLS_PROFILE_CHROME_MODERN = 7;
     public final static int MT_PROXY_CLIENT_HELLO_FRAGMENTATION_OFF = 0;
     public final static int MT_PROXY_CLIENT_HELLO_FRAGMENTATION_SOFT = 1;
     public final static int MT_PROXY_RECORD_SIZING_OFF = 0;
@@ -149,10 +155,14 @@ public class ConnectionsManager extends BaseController {
     private static final String MT_PROXY_TLS_PROFILE_SALT = "profile_salt_v1";
     private static final String MT_PROXY_TLS_PROFILE_OVERRIDE = "profile_override";
     private static final String DOH_USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36";
-    private static final String[] HOST_RESOLVER_DOH_ENDPOINTS = {
-            "https://cloudflare-dns.com/dns-query?name=",
-            "https://dns.google.com/resolve?name="
-    };
+    private static final String DOH_GOOGLE_QUERY_ENDPOINT = "https://dns.google/resolve";
+    private static final String DOH_CLOUDFLARE_QUERY_ENDPOINT = "https://cloudflare-dns.com/dns-query";
+    private static final int HOST_RESOLVER_SYSTEM_TIMEOUT_MS = 1500;
+    private static final int HOST_RESOLVER_DOH_CONNECT_TIMEOUT_MS = 1000;
+    private static final int HOST_RESOLVER_DOH_READ_TIMEOUT_MS = 1500;
+    private static final int HOST_RESOLVER_TOTAL_TIMEOUT_MS = 3000;
+    private static final long HOST_RESOLVER_MAX_FRESH_TTL_MS = 30 * 60 * 1000L;
+    private static final long HOST_RESOLVER_STALE_TTL_MS = 60 * 60 * 1000L;
 
     private static long lastDnsRequestTime;
 
@@ -170,6 +180,7 @@ public class ConnectionsManager extends BaseController {
     private static HashMap<String, ResolveHostByNameTask> resolvingHostnameTasks = new HashMap<>();
 
     public static final Executor DNS_THREAD_POOL_EXECUTOR;
+    private static final Executor DNS_DIRECT_EXECUTOR = Runnable::run;
     public static final int CPU_COUNT = Runtime.getRuntime().availableProcessors();
     private static final int CORE_POOL_SIZE = Math.max(2, Math.min(CPU_COUNT - 1, 4));
     private static final int MAXIMUM_POOL_SIZE = CPU_COUNT * 2 + 1;
@@ -212,15 +223,34 @@ public class ConnectionsManager extends BaseController {
 
     private static class ResolvedDomain {
 
-        public ArrayList<String> addresses;
-        long ttl;
+        public final List<String> ipv4;
+        public final List<String> ipv6;
+        final long expiresAtMs;
+        final long staleExpiresAtMs;
+        final String source;
 
-        public ResolvedDomain(ArrayList<String> a, long t) {
-            addresses = a;
-            ttl = t;
+        public ResolvedDomain(List<String> ipv4Addresses, List<String> ipv6Addresses, long expiresAtMs, long staleExpiresAtMs, String source) {
+            ipv4 = ipv4Addresses != null ? ipv4Addresses : new ArrayList<>();
+            ipv6 = ipv6Addresses != null ? ipv6Addresses : new ArrayList<>();
+            this.expiresAtMs = expiresAtMs;
+            this.staleExpiresAtMs = staleExpiresAtMs;
+            this.source = source;
+        }
+
+        public boolean isFresh(long now) {
+            return now <= expiresAtMs && hasAddresses();
+        }
+
+        public boolean isStale(long now) {
+            return now <= staleExpiresAtMs && hasAddresses();
+        }
+
+        public boolean hasAddresses() {
+            return !ipv4.isEmpty() || !ipv6.isEmpty();
         }
 
         public String getAddress() {
+            List<String> addresses = !ipv4.isEmpty() ? ipv4 : ipv6;
             return addresses.get(Utilities.random.nextInt(addresses.size()));
         }
     }
@@ -881,7 +911,7 @@ public class ConnectionsManager extends BaseController {
                 Utilities.stageQueue.postRunnable(() -> AccountInstance.getInstance(currentAccount).getMessagesController().processUpdates((TLRPC.Updates) message, false));
             } else {
                 if (BuildVars.LOGS_ENABLED) {
-                    FileLog.d(String.format("java received unknown constructor 0x%x", constructor));
+                    FileLog.d(String.format("java_debug_parser_unmapped constructor=0x%x", constructor));
                 }
             }
         } catch (Exception e) {
@@ -1001,16 +1031,19 @@ public class ConnectionsManager extends BaseController {
                 ResolveHostByNameTask task = resolvingHostnameTasks.get(hostName);
                 if (task == null) {
                     task = new ResolveHostByNameTask(hostName);
+                    task.addAddress(address);
+                    resolvingHostnameTasks.put(hostName, task);
                     try {
                         task.executeOnExecutor(DNS_THREAD_POOL_EXECUTOR, null, null, null);
                     } catch (Throwable e) {
+                        resolvingHostnameTasks.remove(hostName);
                         FileLog.e(e);
                         native_onHostNameResolved(hostName, address, "");
                         return;
                     }
-                    resolvingHostnameTasks.put(hostName, task);
+                } else {
+                    task.addAddress(address);
                 }
-                task.addAddress(address);
             }
         });
     }
@@ -1168,7 +1201,7 @@ public class ConnectionsManager extends BaseController {
         if (profile == MT_PROXY_TLS_PROFILE_AUTO_ROTATE) {
             return MT_PROXY_TLS_PROFILE_AUTO_ROTATE;
         }
-        if (profile >= MT_PROXY_TLS_PROFILE_FIREFOX && profile <= MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP) {
+        if (profile >= MT_PROXY_TLS_PROFILE_FIREFOX && profile <= MT_PROXY_TLS_PROFILE_CHROME_MODERN) {
             return profile;
         }
         return MT_PROXY_TLS_PROFILE_AUTO;
@@ -1389,17 +1422,160 @@ public class ConnectionsManager extends BaseController {
         return USE_IPV4_ONLY;
     }
 
-    private static URLConnection openDohJsonConnection(String url, int connectTimeout, int readTimeout) throws Exception {
-        URLConnection httpConnection = new URL(url).openConnection();
+    private static DohJsonResponse loadDohJson(String endpoint, String name, String type, String randomPadding, int connectTimeout, int readTimeout, AsyncTask<?, ?, ?> task) throws Exception {
+        StringBuilder urlBuilder = new StringBuilder(endpoint);
+        urlBuilder.append("?name=").append(name).append("&type=").append(type);
+        if (!TextUtils.isEmpty(randomPadding)) {
+            urlBuilder.append("&random_padding=").append(randomPadding);
+        }
+        URLConnection httpConnection = new URL(urlBuilder.toString()).openConnection();
         httpConnection.addRequestProperty("User-Agent", DOH_USER_AGENT);
         httpConnection.addRequestProperty("accept", "application/dns-json");
         httpConnection.setConnectTimeout(connectTimeout);
         httpConnection.setReadTimeout(readTimeout);
-        return httpConnection;
+        httpConnection.connect();
+
+        ByteArrayOutputStream outbuf = new ByteArrayOutputStream();
+        InputStream httpConnectionStream = null;
+        try {
+            httpConnectionStream = httpConnection.getInputStream();
+            byte[] data = new byte[1024 * 32];
+            while (true) {
+                if (task != null && task.isCancelled()) {
+                    break;
+                }
+                int read = httpConnectionStream.read(data);
+                if (read > 0) {
+                    outbuf.write(data, 0, read);
+                } else if (read == -1) {
+                    break;
+                } else {
+                    break;
+                }
+            }
+            return new DohJsonResponse(outbuf.toByteArray(), (int) (httpConnection.getDate() / 1000));
+        } finally {
+            try {
+                if (httpConnectionStream != null) {
+                    httpConnectionStream.close();
+                }
+            } catch (Throwable e) {
+                FileLog.e(e, false);
+            }
+            try {
+                outbuf.close();
+            } catch (Exception ignore) {
+
+            }
+        }
     }
 
     private static void logDohExpectedFailure(String source, String host, String endpoint, Throwable e) {
         FileLog.d("dns doh failed source=" + source + " host=" + host + " endpoint=" + endpoint + " reason=" + e.getClass().getSimpleName());
+    }
+
+    private static void logHostResolverExpectedFailure(String provider, String host, String reason) {
+        FileLog.d("dns host resolver fallback host=" + host + " provider=" + provider + " reason=" + reason);
+    }
+
+    private static ArrayList<String> filterIpv4Addresses(List<InetAddress> inetAddresses) {
+        ArrayList<String> addresses = new ArrayList<>();
+        if (inetAddresses == null) {
+            return addresses;
+        }
+        for (int a = 0, N = inetAddresses.size(); a < N; a++) {
+            InetAddress inetAddress = inetAddresses.get(a);
+            if (inetAddress instanceof Inet4Address) {
+                String hostAddress = inetAddress.getHostAddress();
+                if (!TextUtils.isEmpty(hostAddress) && !addresses.contains(hostAddress)) {
+                    addresses.add(hostAddress);
+                }
+            }
+        }
+        return addresses;
+    }
+
+    private static ResolvedDomain resolvedDomainFromIpv4Addresses(ArrayList<String> addresses) {
+        if (addresses == null || addresses.isEmpty()) {
+            return null;
+        }
+        return new ResolvedDomain(addresses, SystemClock.elapsedRealtime());
+    }
+
+    @SuppressLint("NewApi")
+    private static ResolvedDomain tryAndroidDnsResolverA(String hostName) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return null;
+        }
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<ArrayList<String>> result = new AtomicReference<>();
+        AtomicReference<Throwable> error = new AtomicReference<>();
+        CancellationSignal cancellationSignal = new CancellationSignal();
+        try {
+            DnsResolver.getInstance().query(null, hostName, DnsResolver.TYPE_A, DnsResolver.FLAG_EMPTY, DNS_DIRECT_EXECUTOR, cancellationSignal, new DnsResolver.Callback<List<InetAddress>>() {
+                @Override
+                public void onAnswer(List<InetAddress> answer, int rcode) {
+                    result.set(filterIpv4Addresses(answer));
+                    latch.countDown();
+                }
+
+                @Override
+                public void onError(DnsResolver.DnsException e) {
+                    error.set(e);
+                    latch.countDown();
+                }
+            });
+            if (!latch.await(HOST_RESOLVER_DNS_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                cancellationSignal.cancel();
+                logHostResolverExpectedFailure("android", hostName, "timeout");
+                return null;
+            }
+        } catch (InterruptedException e) {
+            cancellationSignal.cancel();
+            Thread.currentThread().interrupt();
+            logHostResolverExpectedFailure("android", hostName, e.getClass().getSimpleName());
+            return null;
+        } catch (Throwable e) {
+            cancellationSignal.cancel();
+            logHostResolverExpectedFailure("android", hostName, e.getClass().getSimpleName());
+            return null;
+        }
+        Throwable resolverError = error.get();
+        if (resolverError != null) {
+            logHostResolverExpectedFailure("android", hostName, resolverError.getClass().getSimpleName());
+            return null;
+        }
+        ResolvedDomain resolvedDomain = resolvedDomainFromIpv4Addresses(result.get());
+        if (resolvedDomain == null) {
+            logHostResolverExpectedFailure("android", hostName, "no_ipv4_answer");
+        }
+        return resolvedDomain;
+    }
+
+    private static ResolvedDomain tryInetAddressA(String hostName) {
+        try {
+            InetAddress[] inetAddresses = InetAddress.getAllByName(hostName);
+            ArrayList<String> addresses = new ArrayList<>(inetAddresses.length);
+            for (int a = 0; a < inetAddresses.length; a++) {
+                InetAddress inetAddress = inetAddresses[a];
+                if (inetAddress instanceof Inet4Address) {
+                    String hostAddress = inetAddress.getHostAddress();
+                    if (!TextUtils.isEmpty(hostAddress) && !addresses.contains(hostAddress)) {
+                        addresses.add(hostAddress);
+                    }
+                }
+            }
+            ResolvedDomain resolvedDomain = resolvedDomainFromIpv4Addresses(addresses);
+            if (resolvedDomain == null) {
+                logHostResolverExpectedFailure("inet", hostName, "no_ipv4_answer");
+            }
+            return resolvedDomain;
+        } catch (UnknownHostException e) {
+            FileLog.d("dns inet fallback failed host=" + hostName + " reason=" + e.getClass().getSimpleName());
+        } catch (Exception e) {
+            FileLog.e(e, false);
+        }
+        return null;
     }
 
     private static String randomDohPadding() {
@@ -1410,6 +1586,13 @@ public class ConnectionsManager extends BaseController {
             padding.append(characters.charAt(Utilities.random.nextInt(characters.length())));
         }
         return padding.toString();
+    }
+
+    private static String dnsConfigDomain(int currentAccount) {
+        if (native_isTestBackend(currentAccount) != 0) {
+            return "tapv3.stel.com";
+        }
+        return AccountInstance.getInstance(currentAccount).getMessagesController().dcDomainName;
     }
 
     private static NativeByteBuffer parseDnsTxtConfig(byte[] bytes) throws Exception {
@@ -1445,6 +1628,16 @@ public class ConnectionsManager extends BaseController {
         return buffer;
     }
 
+    private static class DohJsonResponse {
+        final byte[] bytes;
+        final int responseDate;
+
+        DohJsonResponse(byte[] bytes, int responseDate) {
+            this.bytes = bytes;
+            this.responseDate = responseDate;
+        }
+    }
+
     private static class ResolveHostByNameTask extends AsyncTask<Void, Void, ResolvedDomain> {
 
         private ArrayList<Long> addresses = new ArrayList<>();
@@ -1463,77 +1656,14 @@ public class ConnectionsManager extends BaseController {
         }
 
         protected ResolvedDomain doInBackground(Void... voids) {
-            boolean done = false;
-            for (String dohEndpoint : HOST_RESOLVER_DOH_ENDPOINTS) {
-                ByteArrayOutputStream outbuf = null;
-                InputStream httpConnectionStream = null;
-                try {
-                    URLConnection httpConnection = openDohJsonConnection(dohEndpoint + currentHostName + "&type=A", 1000, 2000);
-                    httpConnection.connect();
-                    httpConnectionStream = httpConnection.getInputStream();
-
-                    outbuf = new ByteArrayOutputStream();
-
-                    byte[] data = new byte[1024 * 32];
-                    while (true) {
-                        int read = httpConnectionStream.read(data);
-                        if (read > 0) {
-                            outbuf.write(data, 0, read);
-                        } else if (read == -1) {
-                            break;
-                        } else {
-                            break;
-                        }
-                    }
-
-                    JSONObject jsonObject = new JSONObject(new String(outbuf.toByteArray()));
-                    if (jsonObject.has("Answer")) {
-                        JSONArray array = jsonObject.getJSONArray("Answer");
-                        int len = array.length();
-                        if (len > 0) {
-                            ArrayList<String> addresses = new ArrayList<>(len);
-                            for (int a = 0; a < len; a++) {
-                                addresses.add(array.getJSONObject(a).getString("data"));
-                            }
-                            return new ResolvedDomain(addresses, SystemClock.elapsedRealtime());
-                        }
-                    }
-                    done = true;
-                    break;
-                } catch (FileNotFoundException | UnknownHostException | SocketTimeoutException | SSLException e) {
-                    logDohExpectedFailure("host_resolver", currentHostName, dohEndpoint, e);
-                } catch (Throwable e) {
-                    FileLog.e(e, false);
-                } finally {
-                    try {
-                        if (httpConnectionStream != null) {
-                            httpConnectionStream.close();
-                        }
-                    } catch (Throwable e) {
-                        FileLog.e(e, false);
-                    }
-                    try {
-                        if (outbuf != null) {
-                            outbuf.close();
-                        }
-                    } catch (Exception ignore) {
-
-                    }
-                }
+            ResolvedDomain android = tryAndroidDnsResolverA(currentHostName);
+            if (android != null) {
+                return android;
             }
-            if (!done) {
-                try {
-                    InetAddress address = InetAddress.getByName(currentHostName);
-                    ArrayList<String> addresses = new ArrayList<>(1);
-                    addresses.add(address.getHostAddress());
-                    return new ResolvedDomain(addresses, SystemClock.elapsedRealtime());
-                } catch (UnknownHostException e) {
-                    FileLog.d("dns inet fallback failed host=" + currentHostName + " reason=" + e.getClass().getSimpleName());
-                } catch (Exception e) {
-                    FileLog.e(e, false);
-                }
+            if (isCancelled()) {
+                return null;
             }
-            return null;
+            return tryInetAddressA(currentHostName);
         }
 
         @Override
@@ -1563,54 +1693,16 @@ public class ConnectionsManager extends BaseController {
         }
 
         protected NativeByteBuffer doInBackground(Void... voids) {
-            ByteArrayOutputStream outbuf = null;
-            InputStream httpConnectionStream = null;
             String domain = "";
             try {
-                domain = native_isTestBackend(currentAccount) != 0 ? "tapv3.stel.com" : AccountInstance.getInstance(currentAccount).getMessagesController().dcDomainName;
-                String padding = randomDohPadding();
-                URLConnection httpConnection = openDohJsonConnection("https://dns.google.com/resolve?name=" + domain + "&type=ANY&random_padding=" + padding, 5000, 5000);
-                httpConnection.connect();
-                httpConnectionStream = httpConnection.getInputStream();
-                responseDate = (int) (httpConnection.getDate() / 1000);
-
-                outbuf = new ByteArrayOutputStream();
-
-                byte[] data = new byte[1024 * 32];
-                while (true) {
-                    if (isCancelled()) {
-                        break;
-                    }
-                    int read = httpConnectionStream.read(data);
-                    if (read > 0) {
-                        outbuf.write(data, 0, read);
-                    } else if (read == -1) {
-                        break;
-                    } else {
-                        break;
-                    }
-                }
-
-                return parseDnsTxtConfig(outbuf.toByteArray());
+                domain = dnsConfigDomain(currentAccount);
+                DohJsonResponse response = loadDohJson(DOH_GOOGLE_QUERY_ENDPOINT, domain, "ANY", randomDohPadding(), 5000, 5000, this);
+                responseDate = response.responseDate;
+                return parseDnsTxtConfig(response.bytes);
             } catch (FileNotFoundException | UnknownHostException | SocketTimeoutException | SSLException e) {
-                logDohExpectedFailure("google_txt", domain, "https://dns.google.com/resolve?name=", e);
+                logDohExpectedFailure("google_txt", domain, DOH_GOOGLE_QUERY_ENDPOINT, e);
             } catch (Throwable e) {
                 FileLog.e(e, false);
-            } finally {
-                try {
-                    if (httpConnectionStream != null) {
-                        httpConnectionStream.close();
-                    }
-                } catch (Throwable e) {
-                    FileLog.e(e, false);
-                }
-                try {
-                    if (outbuf != null) {
-                        outbuf.close();
-                    }
-                } catch (Exception ignore) {
-
-                }
             }
             return null;
         }
@@ -1647,54 +1739,16 @@ public class ConnectionsManager extends BaseController {
         }
 
         protected NativeByteBuffer doInBackground(Void... voids) {
-            ByteArrayOutputStream outbuf = null;
-            InputStream httpConnectionStream = null;
             String domain = "";
             try {
-                domain = native_isTestBackend(currentAccount) != 0 ? "tapv3.stel.com" : AccountInstance.getInstance(currentAccount).getMessagesController().dcDomainName;
-                String padding = randomDohPadding();
-                URLConnection httpConnection = openDohJsonConnection("https://mozilla.cloudflare-dns.com/dns-query?name=" + domain + "&type=TXT&random_padding=" + padding, 5000, 5000);
-                httpConnection.connect();
-                httpConnectionStream = httpConnection.getInputStream();
-                responseDate = (int) (httpConnection.getDate() / 1000);
-
-                outbuf = new ByteArrayOutputStream();
-
-                byte[] data = new byte[1024 * 32];
-                while (true) {
-                    if (isCancelled()) {
-                        break;
-                    }
-                    int read = httpConnectionStream.read(data);
-                    if (read > 0) {
-                        outbuf.write(data, 0, read);
-                    } else if (read == -1) {
-                        break;
-                    } else {
-                        break;
-                    }
-                }
-
-                return parseDnsTxtConfig(outbuf.toByteArray());
+                domain = dnsConfigDomain(currentAccount);
+                DohJsonResponse response = loadDohJson(DOH_MOZILLA_CLOUDFLARE_QUERY_ENDPOINT, domain, "TXT", randomDohPadding(), 5000, 5000, this);
+                responseDate = response.responseDate;
+                return parseDnsTxtConfig(response.bytes);
             } catch (FileNotFoundException | UnknownHostException | SocketTimeoutException | SSLException e) {
-                logDohExpectedFailure("mozilla_txt", domain, "https://mozilla.cloudflare-dns.com/dns-query?name=", e);
+                logDohExpectedFailure("mozilla_txt", domain, DOH_MOZILLA_CLOUDFLARE_QUERY_ENDPOINT, e);
             } catch (Throwable e) {
                 FileLog.e(e, false);
-            } finally {
-                try {
-                    if (httpConnectionStream != null) {
-                        httpConnectionStream.close();
-                    }
-                } catch (Throwable e) {
-                    FileLog.e(e, false);
-                }
-                try {
-                    if (outbuf != null) {
-                        outbuf.close();
-                    }
-                } catch (Exception ignore) {
-
-                }
             }
             return null;
         }

@@ -1740,6 +1740,79 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
         }
     }
 
+    // ZaSto: only divert message kinds that processForwardFromMyName resends as a NEW message WITHOUT
+    // its forwardMessages fallback (which would re-enter the divert and recurse → StackOverflow).
+    // Exotic media (poll/dice/story/giveaway/geo-live/unsupported/game/invoice) is left to the normal path.
+    private static boolean zCanResendAsCopy(MessageObject m) {
+        TLRPC.Message owner = m.messageOwner;
+        TLRPC.MessageMedia media = owner.media;
+        if (media == null || media instanceof TLRPC.TL_messageMediaEmpty || media instanceof TLRPC.TL_messageMediaWebPage) {
+            return owner.message != null && owner.message.length() > 0;
+        }
+        return media.photo instanceof TLRPC.TL_photo
+            || media.document instanceof TLRPC.TL_document
+            || media instanceof TLRPC.TL_messageMediaVenue
+            || media instanceof TLRPC.TL_messageMediaGeo
+            || media.phone_number != null;
+    }
+
+    // ZaSto: resend a protected (noforwards) message as a NEW message. Sending media by reference is
+    // rejected by the server (CHAT_FORWARDS_RESTRICTED) — that's the red "!" error — so media bytes are
+    // RE-UPLOADED from the local (decrypted) file instead.
+    private void zResendProtected(MessageObject m, long peer) {
+        TLRPC.MessageMedia media = m.messageOwner.media;
+        if (media == null || media instanceof TLRPC.TL_messageMediaEmpty || media instanceof TLRPC.TL_messageMediaWebPage
+                || media instanceof TLRPC.TL_messageMediaVenue || media instanceof TLRPC.TL_messageMediaGeo || media.phone_number != null) {
+            // text / location / contact: no file to upload — resend as new directly.
+            processForwardFromMyName(m, peer, 0, 0, null);
+            return;
+        }
+        Utilities.globalQueue.postRunnable(() -> {
+            java.io.File f = MediaController.getPlaintextFileForSave(currentAccount, m);
+            if (f != null && f.exists()) {
+                final String path = f.getAbsolutePath();
+                AndroidUtilities.runOnUIThread(() -> zSendCopyFromPath(m, peer, path));
+            } else {
+                // not on disk yet — start a download so a second attempt succeeds.
+                AndroidUtilities.runOnUIThread(() -> {
+                    TLRPC.Document doc = m.getDocument();
+                    if (doc != null) {
+                        getFileLoader().loadFile(doc, m, FileLoader.PRIORITY_HIGH, m.shouldEncryptPhotoOrVideo() ? 2 : 0);
+                    }
+                });
+            }
+        });
+    }
+
+    private void zSendCopyFromPath(MessageObject m, long peer, String path) {
+        try {
+            TLRPC.Message owner = m.messageOwner;
+            ArrayList<TLRPC.MessageEntity> entities = owner.entities;
+            TLRPC.Document doc = m.getDocument();
+            if (doc instanceof TLRPC.TL_document) {
+                // video / voice / round / gif / sticker / music / file: clone the document with a zeroed
+                // reference so the bytes at `path` are uploaded fresh; original attributes are preserved.
+                TLRPC.TL_document clone = new TLRPC.TL_document();
+                clone.id = 0;
+                clone.access_hash = 0;
+                clone.file_reference = new byte[0];
+                clone.dc_id = 0;
+                clone.mime_type = doc.mime_type;
+                clone.size = doc.size;
+                clone.date = getConnectionsManager().getCurrentTime();
+                clone.attributes = new ArrayList<>(doc.attributes);
+                clone.thumbs = new ArrayList<>(doc.thumbs);
+                SendMessageParams params = SendMessageParams.of(clone, null, path, peer, null, null, owner.message, entities, null, null, true, 0, 0, 0, m, null, false);
+                sendMessage(params);
+            } else {
+                // photo
+                prepareSendingPhoto(getAccountInstance(), path, null, peer, null, null, null, owner.message, entities, null, null, 0, null, true, 0, 0, null, 0);
+            }
+        } catch (Throwable t) {
+            FileLog.e(t);
+        }
+    }
+
     public void processForwardFromMyName(MessageObject messageObject, long did, long payStars, long monoForumPeerId, MessageSuggestionParams suggestionParams) {
         if (messageObject == null) {
             return;
@@ -2048,6 +2121,34 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
     ) {
         if (messages == null || messages.isEmpty()) {
             return 0;
+        }
+        if (ZaStoPrivacy.ALLOW_SAVE_PROTECTED) {
+            // ZaSto: content marked non-forwardable can't be forwarded by reference (server returns
+            // CHAT_FORWARDS_RESTRICTED). Resend those as NEW messages (copy) — the same path the
+            // encrypted-chat branch below already uses — and forward the rest normally.
+            ArrayList<MessageObject> zResend = null, zNormal = null;
+            for (int za = 0; za < messages.size(); za++) {
+                MessageObject zm = messages.get(za);
+                boolean zProt = zm != null && zm.messageOwner != null && zm.getId() > 0 && (zm.messageOwner.noforwards || zm.isZastoKeptEphemeral()) && zCanResendAsCopy(zm);
+                if (zProt) {
+                    if (zResend == null) {
+                        zResend = new ArrayList<>();
+                        zNormal = new ArrayList<>(messages.subList(0, za));
+                    }
+                    zResend.add(zm);
+                } else if (zNormal != null) {
+                    zNormal.add(zm);
+                }
+            }
+            if (zResend != null) {
+                for (int za = 0; za < zResend.size(); za++) {
+                    zResendProtected(zResend.get(za), peer);
+                }
+                if (zNormal.isEmpty()) {
+                    return 0;
+                }
+                return sendMessage(zNormal, peer, forwardFromMyName, hideCaption, notify, scheduleDate, scheduleRepeatPeriod, replyToTopMsg, video_timestamp, payStars, monoForumPeerId, suggestionParams);
+            }
         }
         int sendResult = 0;
         long myId = getUserConfig().getClientUserId();
@@ -2804,6 +2905,19 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
         }
         if (params == null) {
             params = new HashMap<>();
+        }
+
+        // ZaSto edit-history: capture the previous media of YOUR OWN message before the edit overwrites it.
+        // The server echo (putMessages load_type==-2) arrives after the optimistic local update, so by then
+        // the DB row already holds the new media — capture here at send time instead.
+        if (ZaStoPrivacy.KEEP_EDIT_HISTORY && !retry && messageObject.getId() > 0 && messageObject.messageOwner != null) {
+            TLRPC.MessageMedia zoldMedia = messageObject.messageOwner.media;
+            boolean zMediaReplaced =
+                (photo != null && !(zoldMedia instanceof TLRPC.TL_messageMediaPhoto && zoldMedia.photo != null && zoldMedia.photo.id == photo.id))
+                || (document != null && !(zoldMedia instanceof TLRPC.TL_messageMediaDocument && zoldMedia.document != null && zoldMedia.document.id == document.id));
+            if (zMediaReplaced) {
+                ZaStoEditHistoryStore.recordEdit(currentAccount, messageObject.getDialogId(), messageObject.messageOwner, messageObject.messageOwner, true);
+            }
         }
 
         TLRPC.Message newMsg = messageObject.messageOwner;

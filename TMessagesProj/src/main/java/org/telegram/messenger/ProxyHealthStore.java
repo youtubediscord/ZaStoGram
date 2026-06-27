@@ -10,6 +10,8 @@ final class ProxyHealthStore {
     private static final long PROXY_CHECK_LIVE_FAILURE_DEDUP_MS = 1500L;
     private static final long PROXY_CHECK_CONNECTED_GRACE_MS = 60 * 1000L;
     private static final long USABLE_SUCCESS_HOLD_MS = 45 * 1000L;
+    private static final long PUNITIVE_FAILURE_WINDOW_MS = 30 * 1000L;
+    private static final int PUNITIVE_FAILURES_TO_ROTATE = 2;
 
     private static final HashMap<String, EndpointState> endpointStates = new HashMap<>();
 
@@ -62,23 +64,36 @@ final class ProxyHealthStore {
         return Math.max(visibleRemaining, Math.max(exactRemaining, networkRemaining));
     }
 
+    static long lastUsableSuccessAgeMs(SharedConfig.ProxyInfo proxyInfo, long now) {
+        if (proxyInfo == null) {
+            return -1;
+        }
+        long exactTime = lastUsableSuccessTime(ProxyEndpointKey.exact(proxyInfo));
+        long networkTime = lastUsableSuccessTime(ProxyEndpointKey.network(proxyInfo));
+        long lastTime = Math.max(exactTime, networkTime);
+        if (lastTime <= 0) {
+            return -1;
+        }
+        return Math.max(0, now - lastTime);
+    }
+
     static void clearUsableSuccessHold(SharedConfig.ProxyInfo proxyInfo) {
         clearUsableSuccessHold(ProxyEndpointKey.exact(proxyInfo));
         clearUsableSuccessHold(ProxyEndpointKey.network(proxyInfo));
     }
 
-    static void rememberLiveFailure(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now) {
+    static EndpointFailureResult rememberLiveFailure(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now) {
         String normalized = ProxyCheckDiagnostics.normalize(diagnostic);
         String key = ProxyEndpointKey.forPhase(proxyInfo, normalized);
         if (key == null) {
-            return;
+            return EndpointFailureResult.noop(normalized);
         }
         EndpointState state = endpointStateForKey(key);
         if (normalized.equals(state.lastDiagnostic) && now - state.lastCheckTime < PROXY_CHECK_LIVE_FAILURE_DEDUP_MS) {
             logControl("decision=live_failure_dedup endpoint=" + ProxyEndpointKey.endpoint(proxyInfo) + " phase=" + normalized);
-            return;
+            return EndpointFailureResult.dedup(normalized, state.consecutiveFailures, state.rotationFailures);
         }
-        rememberEndpointFailure(state, proxyInfo, normalized, now, "live_failure");
+        return rememberEndpointFailure(state, proxyInfo, normalized, now, "live_failure");
     }
 
     static void rememberConnected(SharedConfig.ProxyInfo proxyInfo, long now) {
@@ -106,16 +121,37 @@ final class ProxyHealthStore {
         logControl("decision=clear_backoff phase=" + phase + " endpoint=" + ProxyEndpointKey.endpoint(proxyInfo));
     }
 
-    static void rememberProxyCheckFailure(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now) {
+    static EndpointFailureResult rememberProxyCheckFailure(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now) {
         String normalized = ProxyCheckDiagnostics.normalize(diagnostic);
         String key = ProxyEndpointKey.forPhase(proxyInfo, normalized);
         if (key == null) {
             key = ProxyEndpointKey.exact(proxyInfo);
         }
         if (key == null) {
-            return;
+            return EndpointFailureResult.noop(normalized);
         }
-        rememberEndpointFailure(endpointStateForKey(key), proxyInfo, normalized, now, ProxyConnectionEvent.SOURCE_PROXY_CHECK);
+        return rememberEndpointFailure(endpointStateForKey(key), proxyInfo, normalized, now, ProxyConnectionEvent.SOURCE_PROXY_CHECK);
+    }
+
+    static EndpointFailureResult lastFailureResult(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now) {
+        String normalized = ProxyCheckDiagnostics.normalize(diagnostic);
+        String key = ProxyEndpointKey.forPhase(proxyInfo, normalized);
+        if (key == null) {
+            key = ProxyEndpointKey.exact(proxyInfo);
+        }
+        if (key == null) {
+            return EndpointFailureResult.noop(normalized);
+        }
+        EndpointState state = endpointStates.get(key);
+        if (state == null) {
+            return EndpointFailureResult.noop(normalized);
+        }
+        boolean insideWindow = state.rotationFailureWindowStartTime != 0
+                && now - state.rotationFailureWindowStartTime <= PUNITIVE_FAILURE_WINDOW_MS;
+        boolean rotationAllowed = ProxyPhasePolicy.canRotate(normalized)
+                && insideWindow
+                && state.rotationFailures >= PUNITIVE_FAILURES_TO_ROTATE;
+        return new EndpointFailureResult(normalized, state.consecutiveFailures, state.rotationFailures, rotationAllowed, false);
     }
 
     private static void clearUsableSuccessHold(String key) {
@@ -133,23 +169,50 @@ final class ProxyHealthStore {
         return state.usableSuccessUntil - now;
     }
 
+    private static long lastUsableSuccessTime(String key) {
+        EndpointState state = endpointStates.get(key);
+        return state == null ? 0 : state.lastUsableSuccessTime;
+    }
+
     private static void rememberEndpointConnected(EndpointState state, String diagnostic, long now, boolean usableSuccess) {
         state.consecutiveFailures = 0;
+        state.rotationFailures = 0;
+        state.rotationFailureWindowStartTime = 0;
         state.lastDiagnostic = ProxyCheckDiagnostics.normalize(diagnostic);
         state.lastCheckTime = now;
         state.nextCheckTime = now + PROXY_CHECK_CONNECTED_GRACE_MS;
         state.usableSuccessUntil = usableSuccess ? now + USABLE_SUCCESS_HOLD_MS : 0;
+        if (usableSuccess) {
+            state.lastUsableSuccessTime = now;
+        }
     }
 
-    private static void rememberEndpointFailure(EndpointState state, SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now, String source) {
+    private static EndpointFailureResult rememberEndpointFailure(EndpointState state, SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now, String source) {
         state.usableSuccessUntil = 0;
         state.lastDiagnostic = ProxyCheckDiagnostics.normalize(diagnostic);
         state.lastCheckTime = now;
         state.consecutiveFailures++;
+        if (ProxyPhasePolicy.canRotate(state.lastDiagnostic)) {
+            if (state.rotationFailureWindowStartTime == 0 || now - state.rotationFailureWindowStartTime > PUNITIVE_FAILURE_WINDOW_MS) {
+                state.rotationFailureWindowStartTime = now;
+                state.rotationFailures = 1;
+            } else {
+                state.rotationFailures++;
+            }
+        } else {
+            state.rotationFailureWindowStartTime = 0;
+            state.rotationFailures = 0;
+        }
         long multiplier = 1L << Math.min(2, Math.max(0, state.consecutiveFailures - 1));
         long backoff = Math.min(PROXY_CHECK_FAILURE_BACKOFF_MAX_MS, PROXY_CHECK_FAILURE_BACKOFF_MS * multiplier);
         state.nextCheckTime = now + backoff;
-        logControl("decision=backoff endpoint=" + ProxyEndpointKey.endpoint(proxyInfo) + " wait_ms=" + backoff + " failures=" + state.consecutiveFailures + " phase=" + state.lastDiagnostic + " source=" + source);
+        boolean rotationAllowed = ProxyPhasePolicy.canRotate(state.lastDiagnostic) && state.rotationFailures >= PUNITIVE_FAILURES_TO_ROTATE;
+        logControl("decision=backoff endpoint=" + ProxyEndpointKey.endpoint(proxyInfo) + " wait_ms=" + backoff + " failures=" + state.consecutiveFailures + " rotation_failures=" + state.rotationFailures + " rotation_allowed=" + rotationAllowed + " phase=" + state.lastDiagnostic + " source=" + source);
+        return new EndpointFailureResult(state.lastDiagnostic, state.consecutiveFailures, state.rotationFailures, rotationAllowed, true);
+    }
+
+    static int punitiveFailuresToRotate() {
+        return PUNITIVE_FAILURES_TO_ROTATE;
     }
 
     private static EndpointState endpointStateForKey(String key) {
@@ -193,11 +256,38 @@ final class ProxyHealthStore {
         }
     }
 
+    static final class EndpointFailureResult {
+        final String diagnostic;
+        final int consecutiveFailures;
+        final int rotationFailures;
+        final boolean rotationAllowed;
+        final boolean recorded;
+
+        private EndpointFailureResult(String diagnostic, int consecutiveFailures, int rotationFailures, boolean rotationAllowed, boolean recorded) {
+            this.diagnostic = ProxyCheckDiagnostics.normalize(diagnostic);
+            this.consecutiveFailures = consecutiveFailures;
+            this.rotationFailures = rotationFailures;
+            this.rotationAllowed = rotationAllowed;
+            this.recorded = recorded;
+        }
+
+        static EndpointFailureResult noop(String diagnostic) {
+            return new EndpointFailureResult(diagnostic, 0, 0, false, false);
+        }
+
+        static EndpointFailureResult dedup(String diagnostic, int consecutiveFailures, int rotationFailures) {
+            return new EndpointFailureResult(diagnostic, consecutiveFailures, rotationFailures, false, false);
+        }
+    }
+
     private static class EndpointState {
         int consecutiveFailures;
+        int rotationFailures;
+        long rotationFailureWindowStartTime;
         String lastDiagnostic = ProxyCheckDiagnostics.UNKNOWN_FAIL;
         long lastCheckTime;
         long nextCheckTime;
         long usableSuccessUntil;
+        long lastUsableSuccessTime;
     }
 }

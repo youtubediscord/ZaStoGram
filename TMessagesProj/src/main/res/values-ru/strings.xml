@@ -348,6 +348,7 @@
     <string name="MtProxyTlsProfileInfo">Авто держит один стабильный профиль для конкретного прокси и секрета. Авторотация меняет профиль только после подозрительных FakeTLS-сбоев. Ручной режим принудительно использует один профиль для всех FakeTLS-прокси.</string>
     <string name="MtProxyTlsProfileAuto">Авто</string>
     <string name="MtProxyTlsProfileAutoRotate">Авторотация</string>
+    <string name="MtProxyTlsProfileChromeModern">Chrome+</string>
     <string name="MtProxyTlsProfileAndroidChrome">Chrome</string>
     <string name="MtProxyTlsProfileFirefoxAndroid">Ffox A</string>
     <string name="MtProxyTlsProfileAndroidOkHttp">OkHttp</string>

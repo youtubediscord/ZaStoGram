@@ -43,6 +43,7 @@ import org.telegram.messenger.SharedConfig;
 import org.telegram.messenger.UserConfig;
 import org.telegram.messenger.UserObject;
 import org.telegram.messenger.Utilities;
+import org.telegram.messenger.ZaStoPrivacy;
 import org.telegram.messenger.support.LongSparseIntArray;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.TLObject;
@@ -104,7 +105,8 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
             VIEW_TYPE_STORIES = 18,
             VIEW_TYPE_ARCHIVE_FULLSCREEN = 19,
             VIEW_TYPE_GRAY_SECTION = 20,
-            VIEW_TYPE_FORWARD_TO_STORIES_CELL = 21;
+            VIEW_TYPE_FORWARD_TO_STORIES_CELL = 21,
+            VIEW_TYPE_ZAPRET_VPN_SPONSOR = 22;
 
     public static final String ZAPRET_VPN_SPONSOR_USERNAME = "zapretvpns_bot";
 
@@ -144,6 +146,7 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
     private boolean isTransitionSupport;
     private boolean zapretVpnSponsorResolveRequested;
     private long zapretVpnSponsorDialogId;
+    private int zapretVpnSponsorItemPosition = -1;
 
     private TLRPC.RequestPeerType requestPeerType;
     public boolean isEmpty;
@@ -186,6 +189,9 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
         if (allowForwardAsStories && dialogsType == DialogsActivity.DIALOGS_TYPE_FORWARD) {
             position -= 1;
         }
+        if (zapretVpnSponsorItemPosition >= 0 && position > zapretVpnSponsorItemPosition) {
+            position--;
+        }
         if (dialogsType == DialogsActivity.DIALOGS_TYPE_IMPORT_HISTORY_GROUPS || dialogsType == DialogsActivity.DIALOGS_TYPE_IMPORT_HISTORY) {
             position -= 2;
         } else if (dialogsType == DialogsActivity.DIALOGS_TYPE_IMPORT_HISTORY_USERS) {
@@ -216,6 +222,9 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
     }
 
     private boolean shouldShowZapretVpnSponsor() {
+        if (ZaStoPrivacy.DISABLE_ADS) {
+            return false;
+        }
         return SharedConfig.showZapretVpnSponsor &&
                 folderId == 0 &&
                 dialogsType == DialogsActivity.DIALOGS_TYPE_DEFAULT &&
@@ -228,8 +237,7 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
         if (!shouldShowZapretVpnSponsor() || position < 0 || position >= itemInternals.size() || zapretVpnSponsorDialogId == 0) {
             return false;
         }
-        ItemInternal item = itemInternals.get(position);
-        return item.viewType == VIEW_TYPE_DIALOG && item.dialog != null && item.dialog.id == zapretVpnSponsorDialogId;
+        return itemInternals.get(position).viewType == VIEW_TYPE_ZAPRET_VPN_SPONSOR;
     }
 
     private ArrayList<TLRPC.Dialog> filterLegacyProxySponsorDialogs(ArrayList<TLRPC.Dialog> dialogs, MessagesController messagesController) {
@@ -237,8 +245,8 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
         for (int i = 0; i < dialogs.size(); i++) {
             TLRPC.Dialog dialog = dialogs.get(i);
             if (dialog != null &&
-                    messagesController.promoDialogType == MessagesController.PROMO_TYPE_PROXY &&
-                    messagesController.isPromoDialog(dialog.id, true)) {
+                    (ZaStoPrivacy.DISABLE_ADS || messagesController.promoDialogType == MessagesController.PROMO_TYPE_PROXY) &&
+                    messagesController.isAnyPromoDialog(dialog.id, true)) {
                 if (filteredDialogs == null) {
                     filteredDialogs = new ArrayList<>(dialogs.subList(0, i));
                 }
@@ -255,58 +263,91 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
         return dialog instanceof TLRPC.TL_dialogFolder || dialog != null && DialogObject.isFolderDialogId(dialog.id);
     }
 
-    private ArrayList<TLRPC.Dialog> promoteZapretVpnSponsorDialog(ArrayList<TLRPC.Dialog> dialogs, MessagesController messagesController) {
+    private ArrayList<TLRPC.Dialog> removeZapretVpnSponsorDialogFromArray(ArrayList<TLRPC.Dialog> dialogs, MessagesController messagesController) {
         if (!shouldShowZapretVpnSponsor()) {
             return dialogs;
         }
-        TLRPC.Dialog sponsorDialog = getZapretVpnSponsorDialog(messagesController);
-        if (sponsorDialog == null) {
-            return dialogs;
-        }
-        ArrayList<TLRPC.Dialog> result = new ArrayList<>(dialogs.size() + 1);
-        boolean inserted = false;
+        long dialogId = getZapretVpnSponsorDialogId(messagesController);
+        ArrayList<TLRPC.Dialog> result = null;
         for (int i = 0; i < dialogs.size(); i++) {
             TLRPC.Dialog dialog = dialogs.get(i);
-            if (dialog != null && dialog.id == sponsorDialog.id) {
+            if (dialog != null && (dialog.id == dialogId || isZapretVpnSponsorPeer(dialog.id, messagesController))) {
+                zapretVpnSponsorDialogId = dialog.id;
+                if (result == null) {
+                    result = new ArrayList<>(dialogs.subList(0, i));
+                }
                 continue;
             }
-            result.add(dialog);
-            if (!inserted && isArchiveDialog(dialog)) {
-                result.add(sponsorDialog);
-                inserted = true;
+            if (result != null) {
+                result.add(dialog);
             }
         }
-        if (!inserted) {
-            result.add(0, sponsorDialog);
-        }
-        return result;
+        return result != null ? result : dialogs;
     }
 
-    private TLRPC.Dialog getZapretVpnSponsorDialog(MessagesController messagesController) {
+    private void insertZapretVpnSponsorItem(MessagesController messagesController) {
+        if (!shouldShowZapretVpnSponsor() || getZapretVpnSponsorDialogId(messagesController) == 0) {
+            return;
+        }
+        int insertIndex = 0;
+        for (int i = 0; i < itemInternals.size(); i++) {
+            ItemInternal item = itemInternals.get(i);
+            if (item.viewType == VIEW_TYPE_DIALOG && item.dialog != null) {
+                insertIndex = i;
+                if (isArchiveDialog(item.dialog)) {
+                    insertIndex = i + 1;
+                }
+                break;
+            }
+        }
+        itemInternals.add(insertIndex, new ItemInternal(VIEW_TYPE_ZAPRET_VPN_SPONSOR));
+        zapretVpnSponsorItemPosition = insertIndex;
+    }
+
+    private long getZapretVpnSponsorDialogId(MessagesController messagesController) {
         TLObject object = messagesController.getUserOrChat(ZAPRET_VPN_SPONSOR_USERNAME);
-        long dialogId = 0;
         if (object instanceof TLRPC.User) {
-            dialogId = ((TLRPC.User) object).id;
+            zapretVpnSponsorDialogId = ((TLRPC.User) object).id;
         } else if (object instanceof TLRPC.Chat) {
-            dialogId = -((TLRPC.Chat) object).id;
-        } else if (zapretVpnSponsorDialogId != 0) {
-            dialogId = zapretVpnSponsorDialogId;
+            zapretVpnSponsorDialogId = -((TLRPC.Chat) object).id;
         }
-        if (dialogId == 0) {
+        if (zapretVpnSponsorDialogId == 0) {
             requestZapretVpnSponsorResolve(messagesController);
-            return null;
         }
-        zapretVpnSponsorDialogId = dialogId;
-        TLRPC.Dialog dialog = messagesController.dialogs_dict.get(dialogId);
-        if (dialog != null) {
-            return dialog;
+        return zapretVpnSponsorDialogId;
+    }
+
+    private boolean isZapretVpnSponsorPeer(long dialogId, MessagesController messagesController) {
+        TLObject object = dialogId > 0 ? messagesController.getUser(dialogId) : messagesController.getChat(-dialogId);
+        return isZapretVpnSponsorObject(object);
+    }
+
+    private boolean isZapretVpnSponsorObject(TLObject object) {
+        if (object instanceof TLRPC.User) {
+            TLRPC.User user = (TLRPC.User) object;
+            return isZapretVpnSponsorUsername(user.username) || hasZapretVpnSponsorUsername(user.usernames);
+        } else if (object instanceof TLRPC.Chat) {
+            TLRPC.Chat chat = (TLRPC.Chat) object;
+            return isZapretVpnSponsorUsername(chat.username) || hasZapretVpnSponsorUsername(chat.usernames);
         }
-        TLRPC.TL_dialog placeholderDialog = new TLRPC.TL_dialog();
-        placeholderDialog.id = dialogId;
-        if (dialogId < 0) {
-            placeholderDialog.flags = ChatObject.isChannel(messagesController.getChat(-dialogId)) ? 1 : 0;
+        return false;
+    }
+
+    private boolean hasZapretVpnSponsorUsername(ArrayList<TLRPC.TL_username> usernames) {
+        if (usernames == null) {
+            return false;
         }
-        return placeholderDialog;
+        for (int i = 0; i < usernames.size(); i++) {
+            TLRPC.TL_username username = usernames.get(i);
+            if (username != null && username.active && isZapretVpnSponsorUsername(username.username)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isZapretVpnSponsorUsername(String username) {
+        return username != null && ZAPRET_VPN_SPONSOR_USERNAME.equalsIgnoreCase(username);
     }
 
     private void requestZapretVpnSponsorResolve(MessagesController messagesController) {
@@ -441,6 +482,8 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
             this.emptyType = viewTypeEmpty;
             if (viewTypeEmpty == VIEW_TYPE_LAST_EMPTY) {
                 stableId = 1;
+            } else if (viewTypeEmpty == VIEW_TYPE_ZAPRET_VPN_SPONSOR) {
+                stableId = 6;
             } else {
                 if (viewType == VIEW_TYPE_ARCHIVE_FULLSCREEN) {
                     stableId = 5;
@@ -694,6 +737,7 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
     public RecyclerView.ViewHolder onCreateViewHolder(ViewGroup viewGroup, int viewType) {
         View view;
         switch (viewType) {
+            case VIEW_TYPE_ZAPRET_VPN_SPONSOR:
             case VIEW_TYPE_FORWARD_TO_STORIES_CELL:
             case VIEW_TYPE_DIALOG:
                 if (viewType == VIEW_TYPE_DIALOG && (dialogsType == DialogsActivity.DIALOGS_TYPE_ADD_USERS_TO ||
@@ -927,6 +971,24 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
     @Override
     public void onBindViewHolder(RecyclerView.ViewHolder holder, int i) {
         switch (holder.getItemViewType()) {
+            case VIEW_TYPE_ZAPRET_VPN_SPONSOR: {
+                DialogCell cell = (DialogCell) holder.itemView;
+                MessagesController messagesController = MessagesController.getInstance(currentAccount);
+                long dialogId = getZapretVpnSponsorDialogId(messagesController);
+                TLRPC.Dialog sponsorDialog = dialogId != 0 ? messagesController.dialogs_dict.get(dialogId) : null;
+
+                cell.useSeparator = false;
+                cell.fullSeparator = false;
+                cell.setChecked(false, false);
+                cell.setCustomMessage(null);
+                if (sponsorDialog != null) {
+                    cell.setDialog(sponsorDialog, dialogsType, folderId);
+                } else if (dialogId != 0) {
+                    cell.setDialog(zapretVpnSponsorDialogId, null, 0, false, false);
+                }
+                cell.checkHeight();
+                break;
+            }
             case VIEW_TYPE_FORWARD_TO_STORIES_CELL: {
                 TLRPC.Dialog nextDialog = (TLRPC.Dialog) getItem(i + 1);
 
@@ -1512,7 +1574,7 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
                 int cellHeight = AndroidUtilities.dp(SharedConfig.useThreeLinesLayout ? 76 : 70);
                 int dialogsHeight = 0;
                 for (int i = 0; i < size; i++) {
-                    if (itemInternals.get(i).viewType == VIEW_TYPE_DIALOG) {
+                    if (itemInternals.get(i).viewType == VIEW_TYPE_DIALOG || itemInternals.get(i).viewType == VIEW_TYPE_ZAPRET_VPN_SPONSOR) {
                         if (itemInternals.get(i).isForumCell && !collapsedView) {
                             dialogsHeight += AndroidUtilities.dp(SharedConfig.useThreeLinesLayout ? 86 : 91);
                         } else {
@@ -1572,6 +1634,7 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
 
     private void updateItemList() {
         itemInternals.clear();
+        zapretVpnSponsorItemPosition = -1;
         updateHasHints();
 
         MessagesController messagesController = MessagesController.getInstance(currentAccount);
@@ -1580,7 +1643,7 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
             array = new ArrayList<>();
         }
         array = filterLegacyProxySponsorDialogs(array, messagesController);
-        array = promoteZapretVpnSponsorDialog(array, messagesController);
+        array = removeZapretVpnSponsorDialogFromArray(array, messagesController);
         dialogsCount = array.size();
         isEmpty = false;
         if (dialogsCount == 0 && parentFragment.isArchive()) {
@@ -1667,6 +1730,7 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
                     itemInternals.add(new ItemInternal(VIEW_TYPE_DIALOG, array.get(k)));
                 }
             }
+            insertZapretVpnSponsorItem(messagesController);
             itemInternals.add(new ItemInternal(VIEW_TYPE_LAST_EMPTY));
             return;
         }
@@ -1755,6 +1819,8 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
             }
         }
 
+        insertZapretVpnSponsorItem(messagesController);
+
         if (!messagesController.hiddenUndoChats.isEmpty()) {
             for (int i = 0; i < itemInternals.size(); ++i) {
                 ItemInternal item = itemInternals.get(i);
@@ -1767,7 +1833,7 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
     }
 
     public int getItemHeight(int position) {
-        if (itemInternals.get(position).viewType == VIEW_TYPE_DIALOG) {
+        if (itemInternals.get(position).viewType == VIEW_TYPE_DIALOG || itemInternals.get(position).viewType == VIEW_TYPE_ZAPRET_VPN_SPONSOR) {
             if (itemInternals.get(position).isForumCell && !collapsedView) {
                 return AndroidUtilities.dp(SharedConfig.useThreeLinesLayout ? 86 : 91) + 1;
             } else {

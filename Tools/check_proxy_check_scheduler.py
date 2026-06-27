@@ -388,7 +388,7 @@ if (
     print("Proxy check scheduler guard failed:")
     print(f" - {HEALTH.relative_to(ROOT)}: rotation-visible endpoint backoff must use nextAllowedCheckTime, current elapsed time, and failure count without treating connected grace as failure backoff")
     sys.exit(1)
-mark_failure_method = store_text[store_text.find("public static void markEndpointFailure"):]
+mark_failure_method = store_text[store_text.find("public static ProxyHealthStore.EndpointFailureResult markEndpointFailure"):]
 mark_failure_method = mark_failure_method[:mark_failure_method.find("\n    public static void markEndpointCooldown", 1)]
 if (
     "ProxyPhasePolicy.canBackoff(diagnostic)" not in mark_failure_method

@@ -215,14 +215,14 @@ public class ProxyCheckDiagnostics {
             if (hasFreshFailure(proxyInfo)) {
                 return shortDiagnosticText(proxyInfo.lastCheckDiagnostic);
             }
-            if (hasFreshLivePhase(proxyInfo)) {
-                return shortDiagnosticText(proxyInfo.lastCheckDiagnostic);
-            }
             if (currentConnectionState == ConnectionsManager.ConnectionStateConnected || currentConnectionState == ConnectionsManager.ConnectionStateUpdating) {
                 if (proxyInfo.ping != 0) {
                     return LocaleController.getString(R.string.Connected) + ", " + LocaleController.formatString("Ping", R.string.Ping, proxyInfo.ping);
                 }
                 return LocaleController.getString(R.string.Connected);
+            }
+            if (hasFreshLivePhase(proxyInfo)) {
+                return shortDiagnosticText(proxyInfo.lastCheckDiagnostic);
             }
             if (currentConnectionState == ConnectionsManager.ConnectionStateConnectingToProxy) {
                 return LocaleController.getString(R.string.ProxyStatusWaitingTcp);
@@ -260,14 +260,14 @@ public class ProxyCheckDiagnostics {
         if (hasFreshFailure(proxyInfo)) {
             return shortDiagnosticText(proxyInfo.lastCheckDiagnostic);
         }
-        if (hasFreshLivePhase(proxyInfo)) {
-            return shortDiagnosticText(proxyInfo.lastCheckDiagnostic);
-        }
         if (currentConnectionState == ConnectionsManager.ConnectionStateConnected || currentConnectionState == ConnectionsManager.ConnectionStateUpdating) {
             if (proxyInfo.ping != 0) {
                 return LocaleController.getString(R.string.ProxyWindowStatusReady) + ", " + LocaleController.formatString("Ping", R.string.Ping, proxyInfo.ping);
             }
             return LocaleController.getString(R.string.ProxyWindowStatusReady);
+        }
+        if (hasFreshLivePhase(proxyInfo)) {
+            return shortDiagnosticText(proxyInfo.lastCheckDiagnostic);
         }
         if (currentConnectionState == ConnectionsManager.ConnectionStateConnectingToProxy) {
             return LocaleController.getString(R.string.ProxyStatusWaitingTcp);
@@ -377,11 +377,11 @@ public class ProxyCheckDiagnostics {
             if (hasFreshFailure(proxyInfo)) {
                 return Theme.key_text_RedRegular;
             }
-            if (hasFreshLivePhase(proxyInfo)) {
-                return isProxyUsableSuccessPhase(proxyInfo.lastCheckDiagnostic) ? Theme.key_windowBackgroundWhiteBlueText6 : Theme.key_windowBackgroundWhiteGrayText2;
-            }
             if (currentConnectionState == ConnectionsManager.ConnectionStateConnected || currentConnectionState == ConnectionsManager.ConnectionStateUpdating) {
                 return Theme.key_windowBackgroundWhiteBlueText6;
+            }
+            if (hasFreshLivePhase(proxyInfo)) {
+                return isProxyUsableSuccessPhase(proxyInfo.lastCheckDiagnostic) ? Theme.key_windowBackgroundWhiteBlueText6 : Theme.key_windowBackgroundWhiteGrayText2;
             }
             return Theme.key_windowBackgroundWhiteGrayText2;
         }

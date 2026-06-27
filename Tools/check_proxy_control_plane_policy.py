@@ -48,14 +48,16 @@ def require_not(text: str, needle: str, message: str, failures: list[str]) -> No
 
 def phase_return(policy: str, constant: str) -> str:
     case = f"case ProxyCheckDiagnostics.{constant}:"
-    start = policy.find(case)
+    classify_start = policy.find("private static PhaseInfo classify")
+    search_text = policy[classify_start:] if classify_start != -1 else policy
+    start = search_text.find(case)
     if start == -1:
         return ""
-    end = policy.find("return ", start)
+    end = search_text.find("return ", start)
     if end == -1:
         return ""
-    semicolon = policy.find(";", end)
-    return policy[end:semicolon + 1] if semicolon != -1 else policy[end:]
+    semicolon = search_text.find(";", end)
+    return search_text[end:semicolon + 1] if semicolon != -1 else search_text[end:]
 
 
 def main() -> int:

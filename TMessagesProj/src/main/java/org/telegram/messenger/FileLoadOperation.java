@@ -2260,6 +2260,17 @@ public class FileLoadOperation {
                 count = Math.max(0, currentMaxDownloadRequests - requestInfos.size());
             }
         }
+        int proxyStartupRequestLimit = ProxyRuntimeStateStore.fileLoaderStartupRequestLimit(currentAccount, currentMaxDownloadRequests, isStory || isPreloadVideoOperation);
+        int proxyStartupAvailableRequests = Math.max(0, proxyStartupRequestLimit - requestInfos.size());
+        if (count > proxyStartupAvailableRequests) {
+            if (BuildVars.LOGS_ENABLED) {
+                FileLog.d("proxy_control decision=file_request_fanout_limited account=" + currentAccount + " file=" + fileName + " requested=" + count + " allowed=" + proxyStartupAvailableRequests + " active=" + requestInfos.size() + " story=" + isStory + " preload=" + isPreloadVideoOperation);
+            }
+            count = proxyStartupAvailableRequests;
+        }
+        if (count <= 0) {
+            return;
+        }
 
         if (!requestedReference) {
             if (FileRefController.getInstance(currentAccount).applyCachedFileReference(parentObject, location, this)) {

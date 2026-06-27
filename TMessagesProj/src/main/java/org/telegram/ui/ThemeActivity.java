@@ -166,6 +166,7 @@ public class ThemeActivity extends BaseFragment implements NotificationCenter.No
     private int distanceRow;
     private int searchEngineRow;
     private int bluetoothScoRow;
+    private int hideMainScreenStoriesRow;
     private int enableAnimationsRow;
     private int settings2Row;
     @Keep
@@ -596,6 +597,7 @@ public class ThemeActivity extends BaseFragment implements NotificationCenter.No
         distanceRow = -1;
         searchEngineRow = -1;
         bluetoothScoRow = -1;
+        hideMainScreenStoriesRow = -1;
         settings2Row = -1;
 
         swipeGestureHeaderRow = -1;
@@ -704,6 +706,7 @@ public class ThemeActivity extends BaseFragment implements NotificationCenter.No
                 sensitiveContentRow = rowCount++;
             }
             sendByEnterRow = rowCount++;
+            hideMainScreenStoriesRow = rowCount++;
             distanceRow = rowCount++;
             otherSectionRow = rowCount++;
         } else {
@@ -1127,6 +1130,16 @@ public class ThemeActivity extends BaseFragment implements NotificationCenter.No
                 if (view instanceof TextCheckCell) {
                     ((TextCheckCell) view).setChecked(!send);
                 }
+            } else if (position == hideMainScreenStoriesRow) {
+                SharedPreferences preferences = MessagesController.getGlobalMainSettings();
+                boolean hideStories = preferences.getBoolean("hide_main_screen_stories", false);
+                SharedPreferences.Editor editor = preferences.edit();
+                editor.putBoolean("hide_main_screen_stories", !hideStories);
+                editor.commit();
+                if (view instanceof TextCheckCell) {
+                    ((TextCheckCell) view).setChecked(!hideStories);
+                }
+                getNotificationCenter().postNotificationName(NotificationCenter.storiesEnabledUpdate);
             } else if (position == raiseToSpeakRow) {
                 SharedConfig.toggleRaiseToSpeak();
                 if (view instanceof TextCheckCell) {
@@ -2459,7 +2472,7 @@ public class ThemeActivity extends BaseFragment implements NotificationCenter.No
                     view = new RadioButtonCell(mContext);
                     break;
                 case TYPE_APP_ICON:
-                    view = new AppIconsSelectorCell(mContext, ThemeActivity.this, currentAccount);
+                    view = new AppIconsSelectorCell(mContext);
                     break;
                 case TYPE_CHOOSE_COLOR:
                     view = new PeerColorActivity.ChangeNameColorCell(currentAccount, 0, mContext, getResourceProvider());
@@ -2619,6 +2632,9 @@ public class ThemeActivity extends BaseFragment implements NotificationCenter.No
                         textCheckCell.setTextAndValueAndCheck(getString("DirectShare", R.string.DirectShare), getString("DirectShareInfo", R.string.DirectShareInfo), SharedConfig.directShare, false, true);
                     } else if (position == sensitiveContentRow) {
                         textCheckCell.setTextAndValueAndCheck(getString(R.string.ShowSensitiveContent), getString(R.string.ShowSensitiveContentInfo), getMessagesController().showSensitiveContent(), true, true);
+                    } else if (position == hideMainScreenStoriesRow) {
+                        SharedPreferences preferences = MessagesController.getGlobalMainSettings();
+                        textCheckCell.setTextAndValueAndCheck(getString(R.string.HideMainScreenStories), getString(R.string.HideMainScreenStoriesInfo), preferences.getBoolean("hide_main_screen_stories", false), true, true);
                     } else if (position == chatBlurRow) {
                         textCheckCell.setTextAndCheck(getString("BlurInChat", R.string.BlurInChat), SharedConfig.chatBlurEnabled(), true);
                     }
@@ -2754,7 +2770,7 @@ public class ThemeActivity extends BaseFragment implements NotificationCenter.No
                 return TYPE_BRIGHTNESS;
             } else if (position == scheduleLocationRow || position == sendByEnterRow ||
                     position == raiseToSpeakRow || position == raiseToListenRow || position == pauseOnRecordRow ||
-                    position == directShareRow || position == chatBlurRow || position == pauseOnMediaRow || position == nextMediaTapRow || position == sensitiveContentRow) {
+                    position == directShareRow || position == hideMainScreenStoriesRow || position == chatBlurRow || position == pauseOnMediaRow || position == nextMediaTapRow || position == sensitiveContentRow) {
                 return TYPE_TEXT_CHECK;
             } else if (position == textSizeRow) {
                 return TYPE_TEXT_SIZE;

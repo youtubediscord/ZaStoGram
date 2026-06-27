@@ -204,7 +204,6 @@ void Connection::onReceivedData(NativeByteBuffer *buffer) {
                 parseLaterBuffer = buffer->hasRemaining() ? buffer : nullptr;
                 buffer = restOfTheData;
             } else {
-//                if (LOGS_ENABLED) DEBUG_D("connection(%p, account%u, dc%u, type %d) received packet size less(%u) then message size(%u)", this, currentDatacenter->instanceNum, currentDatacenter->getDatacenterId(), connectionType, restOfTheData->position(), lastPacketLength);
                 return;
             }
         }
@@ -313,7 +312,7 @@ void Connection::onReceivedData(NativeByteBuffer *buffer) {
         } else if (currentPacketLength == buffer->remaining()) {
             if (LOGS_ENABLED) DEBUG_D("connection(%p, account%u, dc%u, type %d) received message len %u equal to packet size", this, currentDatacenter->instanceNum, currentDatacenter->getDatacenterId(), connectionType, currentPacketLength);
         } else {
-            if (LOGS_ENABLED) DEBUG_D("connection(%p, account%u, dc%u, type %d) received packet size less(%u) then message size(%u)", this, currentDatacenter->instanceNum, currentDatacenter->getDatacenterId(), connectionType, buffer->remaining(), currentPacketLength);
+            if (LOGS_ENABLED) DEBUG_D("connection(%p, account%u, dc%u, type %d) mtproto_partial_packet need=%u got=%u", this, currentDatacenter->instanceNum, currentDatacenter->getDatacenterId(), connectionType, currentPacketLength, buffer->remaining());
 
             if (restOfTheData != nullptr && restOfTheData->capacity() < len) {
                 reuseLater = restOfTheData;

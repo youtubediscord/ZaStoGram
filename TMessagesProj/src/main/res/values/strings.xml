@@ -2384,6 +2384,8 @@
     <string name="ZapretVpnSponsorSetting">Показывать спонсора прокси</string>
     <string name="ZapretProxySponsorOn">Вкл</string>
     <string name="ZapretProxySponsorOff">Выкл</string>
+    <string name="HideMainScreenStories">Скрывать сторисы на главном экране</string>
+    <string name="HideMainScreenStoriesInfo">Убирает ленту сторисов и кнопку публикации из списка чатов.</string>
     <string name="FreeProxyChannels">Бесплатные прокси</string>
     <string name="FreeProxyMtProxyEveryday">MTProxy everyday</string>
     <string name="FreeProxyProxyMtProto">Proxy MTProto</string>
@@ -11001,6 +11003,7 @@
     <string name="MtProxyTlsProfileInfo">Auto keeps one stable profile per proxy and secret. Auto rotate changes the profile only after suspicious FakeTLS failures. Manual mode forces one profile for all FakeTLS proxies.</string>
     <string name="MtProxyTlsProfileAuto">Auto</string>
     <string name="MtProxyTlsProfileAutoRotate">Auto rotate</string>
+    <string name="MtProxyTlsProfileChromeModern">Chrome+</string>
     <string name="MtProxyTlsProfileAndroidChrome">Chrome</string>
     <string name="MtProxyTlsProfileFirefoxAndroid">Ffox A</string>
     <string name="MtProxyTlsProfileAndroidOkHttp">OkHttp</string>

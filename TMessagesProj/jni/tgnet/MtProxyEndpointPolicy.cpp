@@ -34,6 +34,7 @@ struct MtProxyEndpointResilienceState {
     int32_t plainNoResponseFailures = 0;
     int32_t postHandshakeFailures = 0;
     int32_t recipeLevel = 0;
+    std::string lastRecipeDiagnostic;
     int32_t activeTcpConnects = 0;
 };
 
@@ -401,6 +402,7 @@ MtProxyEndpointPolicy::FailureResult MtProxyEndpointPolicy::recordFailure(const 
         if (recipeState.recipeLevel < MT_PROXY_ENDPOINT_RECIPE_MAX_LEVEL) {
             recipeState.recipeLevel++;
         }
+        recipeState.lastRecipeDiagnostic = phase;
         result.recipeLevel = recipeState.recipeLevel;
     }
     pthread_mutex_unlock(&mtProxyEndpointPolicyMutex);
@@ -454,6 +456,17 @@ int32_t MtProxyEndpointPolicy::recipeLevelForEndpoint(const std::string &endpoin
     return recipeLevel;
 }
 
+std::string MtProxyEndpointPolicy::lastRecipeDiagnosticForEndpoint(const std::string &endpointKey) {
+    std::string diagnostic;
+    pthread_mutex_lock(&mtProxyEndpointPolicyMutex);
+    auto it = proxyEndpointResilience.find(endpointKey);
+    if (it != proxyEndpointResilience.end()) {
+        diagnostic = it->second.lastRecipeDiagnostic;
+    }
+    pthread_mutex_unlock(&mtProxyEndpointPolicyMutex);
+    return diagnostic;
+}
+
 void MtProxyEndpointPolicy::resetStateForKey(const std::string &key, int64_t now, bool resetRecipe) {
     if (key.empty()) {
         return;
@@ -468,5 +481,6 @@ void MtProxyEndpointPolicy::resetStateForKey(const std::string &key, int64_t now
         state.plainNoResponseFailures = 0;
         state.postHandshakeFailures = 0;
         state.recipeLevel = 0;
+        state.lastRecipeDiagnostic.clear();
     }
 }

@@ -325,6 +325,7 @@ class Attempt:
             "client_hello_send_progress": "client_hello_send_progress",
             "client_hello_fragment_plan": "client_hello_fragment_plan",
             "client_hello_fragment": "client_hello_fragment",
+            "client_hello_fingerprint": "client_hello_fingerprint",
             "server_data_before_client_hello_complete": "server_data_before_client_hello_complete",
             "client_hello_sent": "client_hello_sent",
             "client_hello_sent_no_server_hello": "client_hello_sent_no_server_hello",
@@ -1705,6 +1706,9 @@ def print_report(attempts: list[Attempt], global_lines: list[str]) -> None:
     print("- shadowed_by_usable_success: a late sibling startup failure was ignored because this endpoint recently delivered app-data.")
     print("- held_by_usable_success: Java control-plane kept the current proxy after fresh app-data success.")
     print("- held_live_by_usable_success: Java control-plane kept proven usable status instead of showing a newer sibling live startup phase.")
+    print("- held_live_by_current_proxy_usable: Java control-plane kept connected current-proxy status instead of showing newer sibling socket telemetry.")
+    print("- held_connect_start_by_usable_success: Java control-plane kept proven usable status instead of showing a local reconnect start.")
+    print("- held_connect_start_by_current_proxy_usable: Java control-plane kept connected current-proxy status instead of showing a local reconnect start.")
     print("- connected_without_socket_connected_marker: Telegram reached on_connected, but this log slice has no socket_connected marker; do not treat it as a TCP failure.")
     print("- client_hello_sent_no_server_hello: compare VPN vs non-VPN; with VPN failure points to server/client compatibility, without VPN it can be DPI blackhole.")
     print("- server_hello_hmac_mismatch: likely ClientHello/profile/server response mismatch, not plain packet loss.")

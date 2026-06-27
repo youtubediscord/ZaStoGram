@@ -43,6 +43,7 @@ import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.R;
 import org.telegram.messenger.UserConfig;
 import org.telegram.messenger.Utilities;
+import org.telegram.messenger.ZaStoPrivacy;
 import org.telegram.messenger.browser.Browser;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.TLRPC;
@@ -177,6 +178,13 @@ public class VideoAds {
     private void load() {
         if (loading || loaded) return;
 
+        if (ZaStoPrivacy.DISABLE_ADS) {
+            ads.clear();
+            loaded = true;
+            loading = false;
+            return;
+        }
+
         if (UserConfig.getInstance(currentAccount).isPremium() && MessagesController.getInstance(currentAccount).isSponsoredDisabled()) {
             return;
         }
@@ -240,6 +248,7 @@ public class VideoAds {
     private float currentMenuTranslationY;
 
     private void show() {
+        if (ZaStoPrivacy.DISABLE_ADS) return;
         if (ads.isEmpty()) return;
         final TLRPC.TL_sponsoredMessage ad = ads.get(0);
         final long showTime = System.currentTimeMillis() - currentBulletinPassedTime;
@@ -846,7 +855,7 @@ public class VideoAds {
     }
 
     public void logSponsoredShown(TLRPC.TL_sponsoredMessage ad) {
-        if (ad == null) return;
+        if (ZaStoPrivacy.DISABLE_ADS || ad == null) return;
         final TLRPC.TL_messages_viewSponsoredMessage req = new TLRPC.TL_messages_viewSponsoredMessage();
         req.random_id = ad.random_id;
         if (!BuildVars.DEBUG_PRIVATE_VERSION) {
@@ -855,7 +864,7 @@ public class VideoAds {
     }
 
     public void logSponsoredClicked(TLRPC.TL_sponsoredMessage ad) {
-        if (ad == null) return;
+        if (ZaStoPrivacy.DISABLE_ADS || ad == null) return;
         final TLRPC.TL_messages_clickSponsoredMessage req = new TLRPC.TL_messages_clickSponsoredMessage();
         req.random_id = ad.random_id;
         req.media = false;

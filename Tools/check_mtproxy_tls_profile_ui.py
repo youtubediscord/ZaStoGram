@@ -67,6 +67,7 @@ def main() -> None:
             "MtProxyTlsProfileAuto",
             "MtProxyTlsProfileAutoRotate",
             "MtProxyTlsProfileAndroidChrome",
+            "MtProxyTlsProfileChromeModern",
             "MtProxyTlsProfileFirefoxAndroid",
             "MtProxyTlsProfileAndroidOkHttp",
             "MtProxyTlsProfileFirefox",

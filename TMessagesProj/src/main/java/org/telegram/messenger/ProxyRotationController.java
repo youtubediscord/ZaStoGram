@@ -104,7 +104,7 @@ public class ProxyRotationController implements NotificationCenter.NotificationC
             String endpointKey = (String) args[1];
             if (ProxyPhasePolicy.isProxyUsableSuccessPhase(diagnostic)
                     && ProxyEndpointKey.matchesLiveStage(SharedConfig.currentProxy, endpointKey)
-                    && ProxyRuntimeStateStore.hasFreshUsableSuccess(SharedConfig.currentProxy)) {
+                    && ProxyRuntimeStateStore.isCurrentProxyUsable(SharedConfig.currentProxy)) {
                 cancelScheduledSwitch("usable_success");
                 log("cancel usable_success phase=" + ProxyCheckDiagnostics.normalize(diagnostic) + " endpoint=" + endpointKey + " hold_ms=" + ProxyRuntimeStateStore.usableSuccessRemainingMs(SharedConfig.currentProxy));
                 return;

@@ -1161,7 +1161,7 @@ void ConnectionsManager::onConnectionDataReceived(Connection *connection, Native
                     sendMessagesToConnectionWithConfirmation(messages, connection, false);
                 }
             } else {
-                if (LOGS_ENABLED) DEBUG_D("connection(%p, account%u, dc%u, type %d) received unparsed packet on 0x%" PRIx64, connection, instanceNum, datacenter->getDatacenterId(), connection->getConnectionType(), req_msg_id);
+                if (LOGS_ENABLED) DEBUG_D("connection(%p, account%u, dc%u, type %d) debug_parser_unmapped_packet req_msg_id=0x%" PRIx64, connection, instanceNum, datacenter->getDatacenterId(), connection->getConnectionType(), req_msg_id);
                 if (delegate != nullptr) {
                     delegate->onUnparsedMessageReceived(messageId, data, connection->getConnectionType(), instanceNum);
                 }
@@ -1245,10 +1245,7 @@ TLObject *ConnectionsManager::TLdeserialize(TLObject *request, uint32_t bytes, N
                 }
             }
         } else {
-            if (constructor == 0x96a18d5) {
-                if (LOGS_ENABLED) DEBUG_D("not found file 0x%x", constructor);
-            }
-            if (LOGS_ENABLED) DEBUG_D("not found request to parse constructor 0x%x", constructor);
+            if (LOGS_ENABLED) DEBUG_D("debug_parser_unmapped constructor=0x%x", constructor);
         }
     }
     if (object == nullptr) {

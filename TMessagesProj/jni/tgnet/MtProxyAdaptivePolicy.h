@@ -15,11 +15,15 @@ public:
     struct RecipeInput {
         bool fakeTls = false;
         std::string endpointKey;
+        std::string lastDiagnostic;
         int32_t recipeLevel = 0;
         int32_t clientHelloFragmentation = MT_PROXY_CLIENT_HELLO_FRAGMENTATION_OFF;
         int32_t configuredTlsProfile = MT_PROXY_TLS_PROFILE_AUTO;
         int32_t effectiveTlsProfile = MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID;
         int32_t connectionPatternMode = MT_PROXY_CONNECTION_PATTERN_OFF;
+        int32_t recordSizingMode = MT_PROXY_RECORD_SIZING_OFF;
+        int32_t timingMode = MT_PROXY_TIMING_OFF;
+        int32_t startupCoverMode = MT_PROXY_STARTUP_COVER_OFF;
     };
 
     struct RecipeResult {
@@ -28,6 +32,9 @@ public:
         int32_t clientHelloFragmentation = MT_PROXY_CLIENT_HELLO_FRAGMENTATION_OFF;
         int32_t effectiveTlsProfile = MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID;
         int32_t connectionPatternMode = MT_PROXY_CONNECTION_PATTERN_OFF;
+        int32_t recordSizingMode = MT_PROXY_RECORD_SIZING_OFF;
+        int32_t timingMode = MT_PROXY_TIMING_OFF;
+        int32_t startupCoverMode = MT_PROXY_STARTUP_COVER_OFF;
     };
 
     struct RotateResult {

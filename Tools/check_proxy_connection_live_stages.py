@@ -98,11 +98,11 @@ def main() -> None:
         and status_connected_idx >= 0
         and status_failure_idx < status_connected_idx
         and status_live_idx >= 0
-        and status_live_idx < status_connected_idx
+        and status_connected_idx < status_live_idx
         and header_failure_idx >= 0
         and header_connected_idx >= 0
         and header_failure_idx < header_connected_idx,
-        "fresh concrete proxy phases must override generic Connected text, otherwise the GUI can show connected while the proxy data path is still being proven",
+        "fresh terminal failures must override Connected, but connected/updating current proxy must outrank unresolved per-socket live telemetry",
     )
     require(
         status_failure_idx >= 0
@@ -140,9 +140,10 @@ def main() -> None:
     )
     require(
         color_live_idx >= 0
-        and color_live_idx < color_connected_idx
-        and "isProxyUsableSuccessPhase(proxyInfo.lastCheckDiagnostic)" in diagnostics[color_live_idx:color_connected_idx],
-        "fresh live proxy phases must choose row color before generic connected blue",
+        and color_connected_idx >= 0
+        and color_connected_idx < color_live_idx
+        and "isProxyUsableSuccessPhase(proxyInfo.lastCheckDiagnostic)" in diagnostics[color_live_idx:color_inactive_start_idx],
+        "connected/updating current proxy must choose row color before unresolved live socket telemetry",
     )
     require(
         color_inactive_start_idx >= 0

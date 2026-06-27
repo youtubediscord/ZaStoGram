@@ -518,11 +518,13 @@ def main():
     recipe_apply_end = socket.find("void ConnectionSocket::markProxyHandshakeClientHelloSent", recipe_apply_start)
     recipe_apply_body = socket[recipe_apply_start:recipe_apply_end]
     adaptive_policy = (ROOT / "TMessagesProj/jni/tgnet/MtProxyAdaptivePolicy.cpp").read_text(encoding="utf-8", errors="replace")
-    fragment_step = adaptive_policy.find("result.clientHelloFragmentation = MT_PROXY_CLIENT_HELLO_FRAGMENTATION_SOFT")
-    profile_step = adaptive_policy.find("result.effectiveTlsProfile = adaptiveTlsProfile")
-    quiet_step = adaptive_policy.find("result.connectionPatternMode = MT_PROXY_CONNECTION_PATTERN_QUIET")
+    generic_recipe_start = adaptive_policy.find("if (input.recipeLevel >= 1 && result.clientHelloFragmentation")
+    fragment_step = adaptive_policy.find("result.clientHelloFragmentation = MT_PROXY_CLIENT_HELLO_FRAGMENTATION_SOFT", generic_recipe_start)
+    profile_step = adaptive_policy.find("result.effectiveTlsProfile = adaptiveTlsProfile", fragment_step)
+    quiet_step = adaptive_policy.find("result.connectionPatternMode = MT_PROXY_CONNECTION_PATTERN_QUIET", profile_step)
     require(
-        fragment_step != -1
+        generic_recipe_start != -1
+        and fragment_step != -1
         and profile_step != -1
         and quiet_step != -1
         and fragment_step < profile_step < quiet_step,
@@ -539,13 +541,20 @@ def main():
         "phase-adaptive recipe must switch Auto/AutoRotate to another stable Android TLS profile",
     )
     require(
-        "MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP" in adaptive_policy
+        "MT_PROXY_TLS_PROFILE_CHROME_MODERN" in adaptive_policy
         and "MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID" in adaptive_policy,
-        "phase-adaptive profile step must stay inside Android-family TLS profiles",
+        "phase-adaptive ClientHello failures must be able to switch to the Chrome Modern TLS profile",
     )
     require(
         "input.recipeLevel >= 3" in adaptive_policy and "MT_PROXY_CONNECTION_PATTERN_QUIET" in adaptive_policy,
         "quiet startup must be the third phase-adaptive step, after profile adaptation",
+    )
+    require(
+        "input.lastDiagnostic == \"post_handshake_no_appdata\"" in adaptive_policy
+        and "result.recordSizingMode = MT_PROXY_RECORD_SIZING_CONSERVATIVE" in adaptive_policy
+        and "result.timingMode = MT_PROXY_TIMING_GENTLE" in adaptive_policy
+        and "result.startupCoverMode = MT_PROXY_STARTUP_COVER_SOFT" in adaptive_policy,
+        "post-handshake no-appdata recipe must escalate data shaping instead of treating it as a ClientHello-only failure",
     )
     require(
         "mtProxyDataAwareIptDelayMs" in socket and "outgoingByteStream->hasData()" in socket,

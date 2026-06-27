@@ -29,6 +29,7 @@ WRAPPER = ROOT / "TMessagesProj/jni/TgNetWrapper.cpp"
 PROFILE_FUNCTIONS = [
     ("firefox", "getFirefoxDefault", "getDefault"),
     ("android_chrome", "getDefault", "getAndroidChromeDefault"),
+    ("chrome_modern", "getChromeModernDefault", "getFirefoxAndroidDefault"),
     ("firefox_android", "getFirefoxAndroidDefault", "getAndroidOkHttpDefault"),
     ("android_okhttp", "getAndroidOkHttpDefault", "getYandexDefault"),
     ("yandex", "getYandexDefault", None),
@@ -232,6 +233,7 @@ def main() -> int:
     require("MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID" in java, "Java must define the Firefox Android MTProxy TLS profile")
     require("MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP" in java, "Java must define the Android OkHttp MTProxy TLS profile")
     require("MT_PROXY_TLS_PROFILE_AUTO_ROTATE" in java, "Java must define the auto-rotate MTProxy TLS profile")
+    require("MT_PROXY_TLS_PROFILE_CHROME_MODERN" in java, "Java must define the Chrome Modern MTProxy TLS profile")
     require("MT_PROXY_TLS_PROFILE_RANDOM_COUNT = 2" in java, "sticky MTProxy auto pool must use the stable two-profile pool")
     require(
         re.search(r"if \(bucket == 0\) \{\s*return MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID;", java)
@@ -292,6 +294,7 @@ def main() -> int:
     require(
         "getFirefoxDefault" in cpp
         and "getAndroidChromeDefault" in cpp
+        and "getChromeModernDefault" in cpp
         and "getYandexDefault" in cpp
         and "getFirefoxAndroidDefault" in cpp
         and "getAndroidOkHttpDefault" in cpp
@@ -305,6 +308,7 @@ def main() -> int:
     )
     require(balanced_scopes("getFirefoxDefault", "getDefault"), "Firefox ClientHello scopes must be balanced")
     require(balanced_scopes("getDefault", "getAndroidChromeDefault"), "Android Chrome ClientHello scopes must be balanced")
+    require(balanced_scopes("getChromeModernDefault", "getFirefoxAndroidDefault"), "Chrome Modern ClientHello scopes must be balanced")
     require(balanced_scopes("getFirefoxAndroidDefault", "getAndroidOkHttpDefault"), "Firefox Android ClientHello scopes must be balanced")
     require(balanced_scopes("getAndroidOkHttpDefault", "getYandexDefault"), "Android OkHttp ClientHello scopes must be balanced")
     require(balanced_scopes("getYandexDefault"), "Yandex ClientHello scopes must be balanced")
@@ -328,6 +332,20 @@ def main() -> int:
     require(
         "mtproxy_startup profile" in cpp,
         "MTProxy diagnostics must log selected FakeTLS profile",
+    )
+    require(
+        "logClientHelloFingerprint" in cpp
+        and "mtproxy_startup client_hello_fingerprint" in cpp
+        and "grease_values=" in cpp
+        and "grease_exts=" in cpp
+        and "has_4469=%d" in cpp
+        and "has_44cd=%d" in cpp,
+        "FakeTLS diagnostics must log a compact live ClientHello fingerprint",
+    )
+    require(
+        "MT_PROXY_TLS_PROFILE_CHROME_MODERN" in mtproxy_options
+        and "MT_PROXY_TLS_PROFILE_CHROME_MODERN" in cpp,
+        "native MTProxy options and selector must know Chrome Modern profile",
     )
     require(
         "pendingClientHello" in combined

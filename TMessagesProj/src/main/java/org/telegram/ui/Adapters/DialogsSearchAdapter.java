@@ -46,6 +46,7 @@ import org.telegram.messenger.R;
 import org.telegram.messenger.UserConfig;
 import org.telegram.messenger.UserObject;
 import org.telegram.messenger.Utilities;
+import org.telegram.messenger.ZaStoPrivacy;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.TLObject;
 import org.telegram.tgnet.TLRPC;
@@ -1113,7 +1114,7 @@ public class DialogsSearchAdapter extends RecyclerListView.SelectionAdapter {
                 ConnectionsManager.getInstance(currentAccount).cancelRequest(sponsoredReqId, true);
                 sponsoredReqId = 0;
             }
-            if (query == null || query.length() < 4 || UserConfig.getInstance(currentAccount).isPremium() && MessagesController.getInstance(currentAccount).isSponsoredDisabled()) {
+            if (ZaStoPrivacy.DISABLE_ADS || query == null || query.length() < 4 || UserConfig.getInstance(currentAccount).isPremium() && MessagesController.getInstance(currentAccount).isSponsoredDisabled()) {
                 sponsoredQuery = null;
             } else {
                 final TLRPC.TL_contacts_getSponsoredPeers req = new TLRPC.TL_contacts_getSponsoredPeers();
@@ -2523,7 +2524,7 @@ public class DialogsSearchAdapter extends RecyclerListView.SelectionAdapter {
     }
 
     public void seenSponsoredPeer(TLRPC.TL_sponsoredPeer sponsoredPeer) {
-        if (sponsoredPeer == null) return;
+        if (ZaStoPrivacy.DISABLE_ADS || sponsoredPeer == null) return;
         boolean sent = false;
         for (byte[] r : seenSponsoredPeers) {
             if (Arrays.equals(r, sponsoredPeer.random_id)) {
@@ -2540,7 +2541,7 @@ public class DialogsSearchAdapter extends RecyclerListView.SelectionAdapter {
     }
 
     public void clickedSponsoredPeer(TLRPC.TL_sponsoredPeer sponsoredPeer) {
-        if (sponsoredPeer == null) return;
+        if (ZaStoPrivacy.DISABLE_ADS || sponsoredPeer == null) return;
         TLRPC.TL_messages_clickSponsoredMessage req = new TLRPC.TL_messages_clickSponsoredMessage();
         req.random_id = sponsoredPeer.random_id;
         ConnectionsManager.getInstance(currentAccount).sendRequest(req, null);

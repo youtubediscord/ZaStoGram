@@ -40,10 +40,11 @@ static int32_t autoRotatePoolProfile(int32_t index) {
     static const int32_t profiles[] = {
             MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID,
             MT_PROXY_TLS_PROFILE_YANDEX,
+            MT_PROXY_TLS_PROFILE_CHROME_MODERN,
     };
-    int32_t normalizedIndex = index % 2;
+    int32_t normalizedIndex = index % 3;
     if (normalizedIndex < 0) {
-        normalizedIndex += 2;
+        normalizedIndex += 3;
     }
     return profiles[normalizedIndex];
 }
@@ -51,7 +52,7 @@ static int32_t autoRotatePoolProfile(int32_t index) {
 static int32_t autoRotateInitialIndex(const std::string &key) {
     uint64_t hash = 0xcbf29ce484222325ULL ^ tlsAutoRotateSalt();
     hash = profileHash(hash, key);
-    return (int32_t) (hash % 2);
+    return (int32_t) (hash % 3);
 }
 
 MtProxyAdaptivePolicy::RecipeResult MtProxyAdaptivePolicy::applyRecipe(const RecipeInput &input) {
@@ -60,7 +61,33 @@ MtProxyAdaptivePolicy::RecipeResult MtProxyAdaptivePolicy::applyRecipe(const Rec
     result.clientHelloFragmentation = normalizeMtProxyClientHelloFragmentationOption(input.clientHelloFragmentation);
     result.effectiveTlsProfile = normalizeMtProxyTlsProfileOption(input.effectiveTlsProfile);
     result.connectionPatternMode = normalizeMtProxyConnectionPatternOption(input.connectionPatternMode);
+    result.recordSizingMode = normalizeMtProxyRecordSizingOption(input.recordSizingMode);
+    result.timingMode = normalizeMtProxyTimingOption(input.timingMode);
+    result.startupCoverMode = normalizeMtProxyStartupCoverOption(input.startupCoverMode);
     if (!input.fakeTls || input.endpointKey.empty() || input.recipeLevel <= 0) {
+        return result;
+    }
+    if (input.lastDiagnostic == "post_handshake_no_appdata") {
+        if (result.recordSizingMode == MT_PROXY_RECORD_SIZING_OFF) {
+            result.recordSizingMode = MT_PROXY_RECORD_SIZING_CONSERVATIVE;
+            result.changed = true;
+        }
+        if (result.timingMode == MT_PROXY_TIMING_OFF) {
+            result.timingMode = MT_PROXY_TIMING_GENTLE;
+            result.changed = true;
+        }
+        if (result.startupCoverMode == MT_PROXY_STARTUP_COVER_OFF) {
+            result.startupCoverMode = MT_PROXY_STARTUP_COVER_SOFT;
+            result.changed = true;
+        }
+        if (input.recipeLevel >= 2 && result.connectionPatternMode != MT_PROXY_CONNECTION_PATTERN_STRICT) {
+            if (result.connectionPatternMode == MT_PROXY_CONNECTION_PATTERN_OFF
+                    || result.connectionPatternMode == MT_PROXY_CONNECTION_PATTERN_SOFT
+                    || result.connectionPatternMode == MT_PROXY_CONNECTION_PATTERN_BROWSER) {
+                result.connectionPatternMode = MT_PROXY_CONNECTION_PATTERN_QUIET;
+                result.changed = true;
+            }
+        }
         return result;
     }
     if (input.recipeLevel >= 1 && result.clientHelloFragmentation == MT_PROXY_CLIENT_HELLO_FRAGMENTATION_OFF) {
@@ -115,7 +142,7 @@ MtProxyAdaptivePolicy::RotateResult MtProxyAdaptivePolicy::rotateTlsProfileOnFai
     if (state.profileIndex < 0) {
         state.profileIndex = autoRotateInitialIndex(key);
     }
-    state.profileIndex = (state.profileIndex + 1) % 2;
+    state.profileIndex = (state.profileIndex + 1) % 3;
     state.failures++;
     result.failures = state.failures;
     result.nextProfile = autoRotatePoolProfile(state.profileIndex);
@@ -140,11 +167,11 @@ int32_t MtProxyAdaptivePolicy::adaptiveTlsProfile(int32_t configuredProfile, int
     }
     switch (normalizeMtProxyTlsProfileOption(effectiveProfile)) {
         case MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID:
-            return MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP;
-        case MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP:
+            return MT_PROXY_TLS_PROFILE_CHROME_MODERN;
+        case MT_PROXY_TLS_PROFILE_CHROME_MODERN:
             return MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID;
         case MT_PROXY_TLS_PROFILE_ANDROID_CHROME:
-            return MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID;
+            return MT_PROXY_TLS_PROFILE_CHROME_MODERN;
         default:
             return MT_PROXY_TLS_PROFILE_FIREFOX_ANDROID;
     }

@@ -289,6 +289,8 @@ public class ApplicationLoader extends Application {
 
         super.onCreate();
 
+        ZaStoPrivacy.load();
+
         if (BuildVars.LOGS_ENABLED) {
             FileLog.cleanupLogs();
             FileLog.d("app start time = " + (startTime = SystemClock.elapsedRealtime()));

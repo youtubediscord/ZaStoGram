@@ -22096,6 +22096,7 @@ public class ChatActivity extends BaseFragment implements
                 MessageObject obj = messagesDict[zastoLoadIndex].get(mid);
                 if (obj != null) {
                     obj.deletedBySender = true;
+                    obj.forceUpdate = true; // make the "удалено" marker render live, not only after rebind
                     changed = true;
                 }
             }
@@ -24755,6 +24756,12 @@ public class ChatActivity extends BaseFragment implements
     private Pattern sponsoredUrlPattern;
     private MessageObject botSponsoredMessage;
     private void addSponsoredMessages(boolean animated) {
+        if (org.telegram.messenger.ZaStoPrivacy.DISABLE_ADS) {
+            sponsoredMessagesAdded = true;
+            sponsoredMessagesPostsBetween = 0;
+            botSponsoredMessage = null;
+            return;
+        }
         if (sponsoredMessagesAdded || chatMode != 0 || !ChatObject.isChannel(currentChat) && !UserObject.isBot(currentUser) || !forwardEndReached[0] || getUserConfig().isPremium() && getMessagesController().isSponsoredDisabled() || isReport()) {
             return;
         }
@@ -28913,7 +28920,7 @@ public class ChatActivity extends BaseFragment implements
         ) || DEBUG_TOP_PANELS;
         boolean showAddProfilePicture = UserObject.isBot(currentUser) && currentUser.bot_can_edit && currentUser.photo == null;
         boolean showBizBot = currentEncryptedChat == null && getUserConfig().isPremium() && preferences.getLong("dialog_botid" + did, 0) != 0 || DEBUG_TOP_PANELS;
-        boolean showBotAd = currentUser != null && currentUser.bot && messages.size() >= 2 && botSponsoredMessage != null;
+        boolean showBotAd = currentUser != null && currentUser.bot && messages.size() >= 2 && botSponsoredMessage != null && !org.telegram.messenger.ZaStoPrivacy.DISABLE_ADS;
         if (showRestartTopic) {
             shownRestartTopic = true;
         }
@@ -30659,7 +30666,11 @@ public class ChatActivity extends BaseFragment implements
             allowChatActions = false;
         }
 
-        if (single || type < 2 || type == 20) {
+        // ZaSto: media long-press normally starts selection (gate below is false for type>=2); force the
+        // context menu so the "История изменений" item is reachable on an edited photo/video.
+        boolean zHasEditHistory = org.telegram.messenger.ZaStoPrivacy.KEEP_EDIT_HISTORY && message != null
+                && org.telegram.messenger.ZaStoEditHistoryStore.has(currentAccount, message.getDialogId(), message.getId());
+        if (single || type < 2 || type == 20 || zHasEditHistory) {
             if (getParentActivity() == null) {
                 return false;
             }
@@ -33040,6 +33051,26 @@ public class ChatActivity extends BaseFragment implements
             body.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
             body.setText(TextUtils.isEmpty(v.text) ? "(без текста)" : v.text);
             ll.addView(body, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+            if (v.message != null && v.message.media instanceof org.telegram.tgnet.TLRPC.TL_messageMediaPhoto && v.message.media.photo != null) {
+                final MessageObject zoldMsg = new MessageObject(currentAccount, v.message, false, false);
+                final org.telegram.tgnet.TLRPC.Photo zphoto = v.message.media.photo;
+                org.telegram.ui.Components.BackupImageView zthumb = new org.telegram.ui.Components.BackupImageView(getParentActivity());
+                zthumb.setRoundRadius(AndroidUtilities.dp(6));
+                org.telegram.tgnet.TLRPC.PhotoSize zbig = FileLoader.getClosestPhotoSizeWithSize(zphoto.sizes, AndroidUtilities.dp(140));
+                org.telegram.tgnet.TLRPC.PhotoSize zsmall = FileLoader.getClosestPhotoSizeWithSize(zphoto.sizes, 50);
+                zthumb.setImage(ImageLocation.getForPhoto(zbig, zphoto), "140_140", ImageLocation.getForPhoto(zsmall, zphoto), "50_50", 0, zoldMsg);
+                zthumb.setOnClickListener(view -> {
+                    PhotoViewer.getInstance().setParentActivity(ChatActivity.this, themeDelegate);
+                    PhotoViewer.getInstance().openPhoto(zoldMsg, null, 0, 0, 0, new PhotoViewer.EmptyPhotoViewerProvider() {});
+                });
+                ll.addView(zthumb, LayoutHelper.createLinear(140, 140, 0, 4, 0, 2));
+            } else if (v.message != null && v.message.media instanceof org.telegram.tgnet.TLRPC.TL_messageMediaDocument) {
+                TextView zmediaLabel = new TextView(getParentActivity());
+                zmediaLabel.setTextColor(getThemedColor(Theme.key_dialogTextGray3));
+                zmediaLabel.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
+                zmediaLabel.setText("📎 вложение (заменено)");
+                ll.addView(zmediaLabel, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 2, 0, 2));
+            }
         }
         android.widget.ScrollView sv = new android.widget.ScrollView(getParentActivity());
         sv.addView(ll);
@@ -36270,6 +36301,7 @@ public class ChatActivity extends BaseFragment implements
     }
 
     public void logSponsoredClicked(MessageObject messageObject, boolean media, boolean fullscreen) {
+        if (org.telegram.messenger.ZaStoPrivacy.DISABLE_ADS) return;
         if (messageObject == null || !messageObject.isSponsored()) {
             return;
         }
@@ -36491,6 +36523,7 @@ public class ChatActivity extends BaseFragment implements
     }
 
     private void markSponsoredAsRead(MessageObject object) {
+        if (org.telegram.messenger.ZaStoPrivacy.DISABLE_ADS) return;
         if (object == null) {
             return;
         }
@@ -45555,6 +45588,11 @@ public class ChatActivity extends BaseFragment implements
                             items.add(LocaleController.getString(R.string.SaveToDownloads));
                             options.add(OPTION_SAVE_TO_DOWNLOADS_OR_MUSIC);
                             icons.add(R.drawable.msg_download);
+                        } else if (org.telegram.messenger.ZaStoPrivacy.ALLOW_SAVE_PROTECTED && (selectedObject.isVoiceOnce() || selectedObject.isRoundOnce())) {
+                            // ZaSto: voice-once / round-once are getMessageType()==2 — Save here (handler decrypts the .enc).
+                            items.add(LocaleController.getString(R.string.SaveToDownloads));
+                            options.add(OPTION_SAVE_TO_DOWNLOADS_OR_MUSIC);
+                            icons.add(R.drawable.msg_download);
                         }
                     }
                 } else if (type == 3 && !noforwardsOrPaidMedia) {
@@ -45593,11 +45631,6 @@ public class ChatActivity extends BaseFragment implements
                             items.add(LocaleController.getString(R.string.ShareFile));
                             options.add(OPTION_SHARE);
                             icons.add(R.drawable.msg_shareout);
-                        } else if (org.telegram.messenger.ZaStoPrivacy.ALLOW_SAVE_PROTECTED && (selectedObject.isVoiceOnce() || selectedObject.isRoundOnce())) {
-                            // ZaSto: allow saving view-once voice / round video (decrypted on save).
-                            items.add(LocaleController.getString(R.string.SaveToDownloads));
-                            options.add(OPTION_SAVE_TO_DOWNLOADS_OR_MUSIC);
-                            icons.add(R.drawable.msg_download);
                         } else {
                             if (!selectedObject.needDrawBluredPreview()) {
                                 items.add(LocaleController.getString(R.string.SaveToGallery));

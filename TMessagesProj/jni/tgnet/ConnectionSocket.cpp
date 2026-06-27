@@ -20,6 +20,7 @@
 #include <openssl/hmac.h>
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <map>
 #include <utility>
@@ -1131,6 +1132,88 @@ public:
         return getDefault();
     }
 
+    static TlsHello getChromeModernDefault() {
+        TlsHello res;
+        res.ops = {
+                    Op::string("\x16\x03\x01", 3),
+                    Op::begin_scope(),
+                    Op::string("\x01\x00", 2),
+                    Op::begin_scope(),
+                    Op::string("\x03\x03", 2),
+                    Op::zero(32),
+                    Op::string("\x20", 1),
+                    Op::random(32),
+                    Op::string("\x00\x20", 2),
+                    Op::grease(0),
+                    Op::string("\x13\x01\x13\x02\x13\x03\xc0\x2b\xc0\x2f\xc0\x2c\xc0\x30\xcc\xa9\xcc\xa8\xc0\x13\xc0\x14\x00\x9c\x00\x9d\x00\x2f\x00\x35\x01\x00", 32),
+                    Op::begin_scope(),
+                    Op::grease(2),
+                    Op::string("\x00\x00", 2),
+                    Op::permutation({
+                        {
+                            Op::string("\x00\x00", 2),
+                            Op::begin_scope(),
+                            Op::begin_scope(),
+                            Op::string("\x00", 1),
+                            Op::begin_scope(),
+                            Op::domain(),
+                            Op::end_scope(),
+                            Op::end_scope(),
+                            Op::end_scope()
+                        },
+                        { Op::string("\x00\x05\x00\x05\x01\x00\x00\x00\x00",9) },
+                        {
+                            Op::string("\x00\x0a\x00\x0c\x00\x0a", 6),
+                            Op::grease(4),
+                            Op::string("\x11\xec\x00\x1d\x00\x17\x00\x18", 8)
+                        },
+                        { Op::string("\x00\x0b\x00\x02\x00\x00", 6) },
+                        { Op::string("\x00\x0d\x00\x12\x00\x10\x04\x03\x08\x04\x04\x01\x05\x03\x08\x05\x05\x01\x08\x06\x06\x01",22) },
+                        { Op::string("\x00\x10\x00\x0e\x00\x0c\x02\x68\x32\x08\x68\x74\x74\x70\x2f\x31\x2e\x31", 18) },
+                        { Op::string("\x00\x12\x00\x00", 4) },
+                        { Op::string("\x00\x17\x00\x00", 4) },
+                        { Op::string("\x00\x1b\x00\x03\x02\x00\x02", 7) },
+                        { Op::string("\x00\x23\x00\x00", 4) },
+                        {
+                            Op::string("\x00\x2b\x00\x07\x06", 5),
+                            Op::grease(6),
+                            Op::string("\x03\x04\x03\x03", 4)
+                        },
+                        { Op::string("\x00\x2d\x00\x02\x01\x01", 6) },
+                        {
+                            Op::string("\x00\x33\x04\xef\x04\xed", 6),
+                            Op::grease(4),
+                            Op::string("\x00\x01\x00\x11\xec\x04\xc0", 7),
+                            Op::M(),
+                            Op::K(),
+                            Op::string("\x00\x1d\x00\x20", 4),
+                            Op::K(),
+                        },
+                        { Op::string("\x44\x69\x00\x05\x00\x03\x02\x68\x32", 9) },
+                        {
+                            Op::string("\xfe\x0d", 2),
+                            Op::begin_scope(),
+                            Op::string("\x00\x00\x01\x00\x01", 5),
+                            Op::random(1),
+                            Op::string("\x00\x20", 2),
+                            Op::K(),
+                            Op::begin_scope(),
+                            Op::E(),
+                            Op::end_scope(),
+                            Op::end_scope()
+                        },
+                        { Op::string("\xff\x01\x00\x01\x00", 5) }
+                    }),
+                    Op::grease(3),
+                    Op::string("\x00\x01\x00", 3),
+                    Op::P(),
+                    Op::end_scope(),
+                    Op::end_scope(),
+                    Op::end_scope()
+        };
+        return res;
+    }
+
     static TlsHello getFirefoxAndroidDefault() {
         TlsHello res;
         res.ops = {
@@ -1439,7 +1522,7 @@ static int32_t normalizeMtProxyTlsProfile(int32_t profile) {
     if (profile == MT_PROXY_TLS_PROFILE_AUTO || profile == MT_PROXY_TLS_PROFILE_AUTO_ROTATE) {
         return profile;
     }
-    if (profile >= MT_PROXY_TLS_PROFILE_FIREFOX && profile <= MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP) {
+    if (profile >= MT_PROXY_TLS_PROFILE_FIREFOX && profile <= MT_PROXY_TLS_PROFILE_CHROME_MODERN) {
         return profile;
     }
     return MT_PROXY_TLS_PROFILE_ANDROID_CHROME;
@@ -1486,6 +1569,8 @@ static const char *mtProxyTlsProfileName(int32_t profile) {
             return "android_okhttp";
         case MT_PROXY_TLS_PROFILE_AUTO_ROTATE:
             return "auto_rotate";
+        case MT_PROXY_TLS_PROFILE_CHROME_MODERN:
+            return "chrome_modern";
         default:
             return "android_chrome";
     }
@@ -1501,6 +1586,8 @@ static TlsHello selectMtProxyTlsHello(int32_t profile) {
             return TlsHello::getFirefoxAndroidDefault();
         case MT_PROXY_TLS_PROFILE_ANDROID_OKHTTP:
             return TlsHello::getAndroidOkHttpDefault();
+        case MT_PROXY_TLS_PROFILE_CHROME_MODERN:
+            return TlsHello::getChromeModernDefault();
         case MT_PROXY_TLS_PROFILE_ANDROID_CHROME:
         default:
             return TlsHello::getAndroidChromeDefault();
@@ -1511,6 +1598,152 @@ static bool isGreaseValue(uint16_t value) {
     uint8_t high = (uint8_t) ((value >> 8) & 0xff);
     uint8_t low = (uint8_t) (value & 0xff);
     return high == low && (low & 0x0f) == 0x0a;
+}
+
+static uint16_t readBigEndian16(const uint8_t *data) {
+    return (uint16_t) (((uint16_t) data[0] << 8) | data[1]);
+}
+
+static void appendHex16(std::string &target, uint16_t value) {
+    char buffer[8];
+    std::snprintf(buffer, sizeof(buffer), "%04x", value);
+    if (!target.empty()) {
+        target += ",";
+    }
+    target += buffer;
+}
+
+static void appendGreaseValue(std::string &target, uint16_t value) {
+    if (isGreaseValue(value)) {
+        appendHex16(target, value);
+    }
+}
+
+static void logClientHelloFingerprint(const void *socket, const char *profileName, const uint8_t *data, uint32_t size) {
+    if (!LOGS_ENABLED) {
+        return;
+    }
+    std::string greaseValues;
+    std::string greaseExtensions;
+    bool has4469 = false;
+    bool has44cd = false;
+    auto logParsed = [&]() {
+        if (greaseValues.empty()) {
+            greaseValues = "-";
+        }
+        if (greaseExtensions.empty()) {
+            greaseExtensions = "-";
+        }
+        DEBUG_D("connection(%p) mtproxy_startup client_hello_fingerprint profile=%s size=%u grease_values=%s grease_exts=%s has_4469=%d has_44cd=%d", socket, profileName != nullptr ? profileName : "unknown", size, greaseValues.c_str(), greaseExtensions.c_str(), has4469 ? 1 : 0, has44cd ? 1 : 0);
+    };
+    auto logInvalid = [&](const char *reason) {
+        DEBUG_D("connection(%p) mtproxy_startup client_hello_fingerprint profile=%s size=%u parse=0 reason=%s grease_values=- grease_exts=- has_4469=0 has_44cd=0", socket, profileName != nullptr ? profileName : "unknown", size, reason != nullptr ? reason : "unknown");
+    };
+
+    if (data == nullptr || size < 100 || data[0] != 0x16 || data[5] != 0x01) {
+        logInvalid("prefix");
+        return;
+    }
+    uint32_t pos = 11 + 32;
+    if (pos >= size) {
+        logInvalid("random");
+        return;
+    }
+    uint32_t sessionLength = data[pos++];
+    if (pos + sessionLength + 2 > size) {
+        logInvalid("session");
+        return;
+    }
+    pos += sessionLength;
+
+    uint32_t cipherSuitesLength = readBigEndian16(data + pos);
+    pos += 2;
+    if (cipherSuitesLength < 2 || (cipherSuitesLength % 2) != 0 || pos + cipherSuitesLength > size) {
+        logInvalid("ciphers");
+        return;
+    }
+    uint32_t cipherSuitesEnd = pos + cipherSuitesLength;
+    while (pos + 1 < cipherSuitesEnd) {
+        appendGreaseValue(greaseValues, readBigEndian16(data + pos));
+        pos += 2;
+    }
+
+    if (pos >= size) {
+        logInvalid("compression");
+        return;
+    }
+    uint32_t compressionLength = data[pos++];
+    if (pos + compressionLength + 2 > size) {
+        logInvalid("compression_len");
+        return;
+    }
+    pos += compressionLength;
+
+    uint32_t extensionsLength = readBigEndian16(data + pos);
+    pos += 2;
+    if (pos + extensionsLength > size) {
+        logInvalid("extensions");
+        return;
+    }
+    uint32_t extensionsEnd = pos + extensionsLength;
+    while (pos + 4 <= extensionsEnd) {
+        uint16_t extensionType = readBigEndian16(data + pos);
+        uint32_t extensionLength = readBigEndian16(data + pos + 2);
+        pos += 4;
+        if (pos + extensionLength > extensionsEnd) {
+            logInvalid("extension_len");
+            return;
+        }
+        uint32_t extensionData = pos;
+        uint32_t extensionEnd = pos + extensionLength;
+        if (extensionType == 0x4469) {
+            has4469 = true;
+        } else if (extensionType == 0x44cd) {
+            has44cd = true;
+        }
+        if (isGreaseValue(extensionType)) {
+            appendHex16(greaseExtensions, extensionType);
+            appendGreaseValue(greaseValues, extensionType);
+        } else if (extensionType == 0x000a && extensionLength >= 2) {
+            uint32_t listLength = readBigEndian16(data + extensionData);
+            uint32_t listPos = extensionData + 2;
+            uint32_t listEnd = listPos + listLength;
+            if (listEnd <= extensionEnd) {
+                while (listPos + 1 < listEnd) {
+                    appendGreaseValue(greaseValues, readBigEndian16(data + listPos));
+                    listPos += 2;
+                }
+            }
+        } else if (extensionType == 0x002b && extensionLength >= 1) {
+            uint32_t listLength = data[extensionData];
+            uint32_t listPos = extensionData + 1;
+            uint32_t listEnd = listPos + listLength;
+            if (listEnd <= extensionEnd) {
+                while (listPos + 1 < listEnd) {
+                    appendGreaseValue(greaseValues, readBigEndian16(data + listPos));
+                    listPos += 2;
+                }
+            }
+        } else if (extensionType == 0x0033 && extensionLength >= 2) {
+            uint32_t listLength = readBigEndian16(data + extensionData);
+            uint32_t listPos = extensionData + 2;
+            uint32_t listEnd = listPos + listLength;
+            if (listEnd <= extensionEnd) {
+                while (listPos + 3 < listEnd) {
+                    uint16_t group = readBigEndian16(data + listPos);
+                    uint32_t keyLength = readBigEndian16(data + listPos + 2);
+                    appendGreaseValue(greaseValues, group);
+                    listPos += 4;
+                    if (listPos + keyLength > listEnd) {
+                        break;
+                    }
+                    listPos += keyLength;
+                }
+            }
+        }
+        pos = extensionEnd;
+    }
+    logParsed();
 }
 
 static bool validateServerCompatibleHello(const uint8_t *data, uint32_t size, const std::string &domain, const char *profileName) {
@@ -2152,11 +2385,15 @@ void ConnectionSocket::applyMtProxyPhaseAdaptiveRecipe() {
     MtProxyAdaptivePolicy::RecipeInput input;
     input.fakeTls = currentSecretIsFakeTls;
     input.endpointKey = currentMtProxyEndpointKey;
+    input.lastDiagnostic = MtProxyEndpointPolicy::lastRecipeDiagnosticForEndpoint(currentMtProxyEndpointKey);
     input.recipeLevel = recipeLevel;
     input.clientHelloFragmentation = currentClientHelloFragmentation;
     input.configuredTlsProfile = currentProxyTlsProfile;
     input.effectiveTlsProfile = currentEffectiveProxyTlsProfile;
     input.connectionPatternMode = currentConnectionPatternMode;
+    input.recordSizingMode = currentRecordSizingMode;
+    input.timingMode = currentTimingMode;
+    input.startupCoverMode = currentStartupCoverMode;
     MtProxyAdaptivePolicy::RecipeResult recipe = MtProxyAdaptivePolicy::applyRecipe(input);
     if (!recipe.changed) {
         return;
@@ -2164,8 +2401,11 @@ void ConnectionSocket::applyMtProxyPhaseAdaptiveRecipe() {
     currentClientHelloFragmentation = recipe.clientHelloFragmentation;
     currentEffectiveProxyTlsProfile = recipe.effectiveTlsProfile;
     currentConnectionPatternMode = recipe.connectionPatternMode;
+    currentRecordSizingMode = recipe.recordSizingMode;
+    currentTimingMode = recipe.timingMode;
+    currentStartupCoverMode = recipe.startupCoverMode;
     publishProxyConnectionStage("phase_adaptive_recipe");
-    if (LOGS_ENABLED) DEBUG_D("connection(%p) mtproxy_startup phase_adaptive_recipe key=%s level=%d fragment=%d effective_profile=%s connection_pattern=%s", this, currentMtProxyEndpointKey.c_str(), recipeLevel, currentClientHelloFragmentation, mtProxyTlsProfileName(currentEffectiveProxyTlsProfile), mtProxyConnectionPatternModeName(currentConnectionPatternMode));
+    if (LOGS_ENABLED) DEBUG_D("connection(%p) mtproxy_startup phase_adaptive_recipe key=%s level=%d last=%s fragment=%d effective_profile=%s connection_pattern=%s record_sizing=%d timing=%d startup_cover=%d", this, currentMtProxyEndpointKey.c_str(), recipeLevel, input.lastDiagnostic.c_str(), currentClientHelloFragmentation, mtProxyTlsProfileName(currentEffectiveProxyTlsProfile), mtProxyConnectionPatternModeName(currentConnectionPatternMode), currentRecordSizingMode, currentTimingMode, currentStartupCoverMode);
 }
 
 void ConnectionSocket::markProxyHandshakeClientHelloSent() {
@@ -4344,6 +4584,7 @@ void ConnectionSocket::onEvent(uint32_t events) {
                         ((int32_t *) (tempBuffer->bytes + 64 * 1024 + 28))[0] = old ^ currentTime;
 
                         memcpy(tempBuffer->bytes + 11, tempBuffer->bytes + 64 * 1024, 32);
+                        logClientHelloFingerprint(this, profileName, tempBuffer->bytes, size);
                         bytesRead = 0;
 
                         if (!buildPendingClientHello(size)) {

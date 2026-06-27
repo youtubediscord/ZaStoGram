@@ -247,10 +247,54 @@ public class FileLoader extends BaseController {
         super(instance);
         filePathDatabase = new FilePathDatabase(instance);
         for (int i = 0; i < smallFilesQueue.length; i++)  {
-            smallFilesQueue[i] = new FileLoaderPriorityQueue(instance, "smallFilesQueue dc" + (i + 1), FileLoaderPriorityQueue.TYPE_SMALL, fileLoaderQueue);
-            largeFilesQueue[i] = new FileLoaderPriorityQueue(instance, "largeFilesQueue dc" + (i + 1), FileLoaderPriorityQueue.TYPE_LARGE, fileLoaderQueue);
+            smallFilesQueue[i] = new FileLoaderPriorityQueue(instance, this, "smallFilesQueue dc" + (i + 1), FileLoaderPriorityQueue.TYPE_SMALL, fileLoaderQueue);
+            largeFilesQueue[i] = new FileLoaderPriorityQueue(instance, this, "largeFilesQueue dc" + (i + 1), FileLoaderPriorityQueue.TYPE_LARGE, fileLoaderQueue);
         }
         dumpFilesQueue();
+    }
+
+    boolean canStartProxyStartupMediaOperation(FileLoadOperation operation, int plannedStarts) {
+        if (operation == null || operation.preFinished) {
+            return true;
+        }
+        boolean delayedPreload = operation.isStory || operation.isPreloadVideoOperation();
+        if (ProxyRuntimeStateStore.fileLoaderStartupRequestLimit(currentAccount, 1, delayedPreload) <= 0) {
+            return false;
+        }
+        int limit = ProxyRuntimeStateStore.fileLoaderStartupOperationLimit(currentAccount, Integer.MAX_VALUE);
+        if (limit == Integer.MAX_VALUE || operation.wasStarted()) {
+            return true;
+        }
+        return countProxyStartupActiveLoadOperations() + plannedStarts < limit;
+    }
+
+    void scheduleProxyStartupFanoutRecheck(FileLoaderPriorityQueue queue) {
+        int delay = ProxyRuntimeStateStore.fileLoaderStartupFanoutRecheckDelayMs(currentAccount);
+        if (delay <= 0) {
+            return;
+        }
+        fileLoaderQueue.postRunnable(() -> queue.checkLoadingOperations(), delay);
+    }
+
+    private int countProxyStartupActiveLoadOperations() {
+        return countProxyStartupActiveLoadOperations(smallFilesQueue) + countProxyStartupActiveLoadOperations(largeFilesQueue);
+    }
+
+    private int countProxyStartupActiveLoadOperations(FileLoaderPriorityQueue[] queues) {
+        int count = 0;
+        for (int i = 0; i < queues.length; i++) {
+            FileLoaderPriorityQueue queue = queues[i];
+            if (queue == null) {
+                continue;
+            }
+            for (int a = 0; a < queue.allOperations.size(); a++) {
+                FileLoadOperation operation = queue.allOperations.get(a);
+                if (operation != null && operation.wasStarted() && !operation.preFinished) {
+                    count++;
+                }
+            }
+        }
+        return count;
     }
 
     public static void setMediaDirs(SparseArray<File> dirs) {
