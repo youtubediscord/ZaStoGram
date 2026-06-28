@@ -415,6 +415,13 @@ public class SharedConfig {
         return timeoutIndex;
     }
 
+    private static int clampInt(int value, int min, int max) {
+        if (value < min) {
+            return min;
+        }
+        return (value > max) ? max : value;
+    }
+
     public static void setWssTransport(int mode, String host, int port, String path, boolean miniApps) {
         wssTransportMode = normalizeWssTransportMode(mode);
         wssHost = host != null ? host : "";
@@ -550,7 +557,6 @@ public class SharedConfig {
                 editor.putBoolean("mtProxyClientHelloFragmentation", mtProxyClientHelloFragmentation);
                 editor.putBoolean("mtProxySoftMux", mtProxySoftMux);
                 editor.putInt("mtProxyConnectionPatternMode", mtProxyConnectionPatternMode);
-                editor.putBoolean("mtProxyHandshakeAdmission", mtProxyConnectionPatternMode != 0);
                 editor.putInt("mtProxyRecordSizingMode", mtProxyRecordSizingMode);
                 editor.putInt("mtProxyTimingMode", mtProxyTimingMode);
                 editor.putInt("mtProxyStartupCoverMode", mtProxyStartupCoverMode);
@@ -629,20 +635,10 @@ public class SharedConfig {
             showZapretVpnSponsor = preferences.getBoolean("showZapretVpnSponsor", true);
             mtProxyClientHelloFragmentation = preferences.getBoolean("mtProxyClientHelloFragmentation", false);
             mtProxySoftMux = preferences.getBoolean("mtProxySoftMux", true);
-            if (preferences.contains("mtProxyConnectionPatternMode")) {
-                mtProxyConnectionPatternMode = preferences.getInt("mtProxyConnectionPatternMode", 0);
-            } else {
-                mtProxyConnectionPatternMode = preferences.getBoolean("mtProxyHandshakeAdmission", false) ? 1 : 0;
-            }
-            if (mtProxyConnectionPatternMode < 0 || mtProxyConnectionPatternMode > 4) {
-                mtProxyConnectionPatternMode = 0;
-            }
-            mtProxyRecordSizingMode = preferences.getInt("mtProxyRecordSizingMode", 0);
-            mtProxyTimingMode = preferences.getInt("mtProxyTimingMode", 0);
-            mtProxyStartupCoverMode = preferences.getInt("mtProxyStartupCoverMode", 0);
-            if (mtProxyStartupCoverMode < 0 || mtProxyStartupCoverMode > 2) {
-                mtProxyStartupCoverMode = 0;
-            }
+            mtProxyConnectionPatternMode = clampInt(preferences.getInt("mtProxyConnectionPatternMode", 0), 0, 4);
+            mtProxyRecordSizingMode = clampInt(preferences.getInt("mtProxyRecordSizingMode", 0), 0, 2);
+            mtProxyTimingMode = clampInt(preferences.getInt("mtProxyTimingMode", 0), 0, 2);
+            mtProxyStartupCoverMode = clampInt(preferences.getInt("mtProxyStartupCoverMode", 0), 0, 2);
             wssTransportMode = normalizeWssTransportMode(preferences.getInt("wssTransportMode", TRANSPORT_LEGACY_PROXY));
             wssHost = preferences.getString("wssHost", "");
             wssPort = preferences.getInt("wssPort", 443);
@@ -1653,6 +1649,31 @@ public class SharedConfig {
             ProxyInfo info = currentWssSocksProxy = new ProxyInfo(wssSocksAddress, wssSocksPort, wssSocksUsername, wssSocksPassword, "");
             proxyList.add(0, info);
         }
+        ensureDefaultProxyEntry(preferences);
+    }
+
+    // Seeds a removable default SOCKS5 entry (127.0.0.1:1353) into the proxy
+    // list once, mirroring tdesktop's ensureDefaultProxy. It is NOT selected
+    // or forced - just a convenience row the user can use (if a local bypass
+    // tool listens on 1353) or delete. WSS stays opt-in and is untouched here.
+    private static void ensureDefaultProxyEntry(SharedPreferences preferences) {
+        if (preferences.getBoolean("default_proxy_added", false)) {
+            return;
+        }
+        for (ProxyInfo existing : proxyList) {
+            if (existing != null
+                    && "127.0.0.1".equals(existing.address)
+                    && existing.port == 1353
+                    && TextUtils.isEmpty(existing.secret)
+                    && existing.transportMode == TRANSPORT_LEGACY_PROXY) {
+                preferences.edit().putBoolean("default_proxy_added", true).apply();
+                return;
+            }
+        }
+        ProxyInfo info = new ProxyInfo("127.0.0.1", 1353, "", "", "");
+        proxyList.add(0, info);
+        saveProxyList();
+        preferences.edit().putBoolean("default_proxy_added", true).apply();
     }
 
     public static void saveProxyList() {

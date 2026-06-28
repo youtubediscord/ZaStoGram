@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.text.TextUtils;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -29,6 +30,7 @@ import org.telegram.ui.Components.BulletinFactory;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.RecyclerListView;
 
+import java.io.File;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
@@ -168,6 +170,56 @@ public class PluginsActivity extends BaseFragment implements NotificationCenter.
                 }
             });
         });
+    }
+
+    /**
+     * Shows a review-and-install dialog for a .plugin file opened inside the app (e.g. tapped in a
+     * chat) instead of handing it to an external viewer/browser. Returns true if handled.
+     * Called on the UI thread from AndroidUtilities.openForView.
+     */
+    public static boolean offerInstall(android.app.Activity activity, File file) {
+        if (activity == null || file == null || !file.exists()) {
+            return false;
+        }
+        PluginInfo meta = PluginsController.parseMetadata(file);
+        if (meta == null || TextUtils.isEmpty(meta.id)) {
+            return false; // not a recognizable plugin — let the normal open proceed
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append(meta.displayName());
+        if (!TextUtils.isEmpty(meta.version)) {
+            sb.append("  v").append(meta.version);
+        }
+        if (!TextUtils.isEmpty(meta.author)) {
+            sb.append("\n").append(meta.author);
+        }
+        if (!TextUtils.isEmpty(meta.description)) {
+            sb.append("\n\n").append(meta.description);
+        }
+        if (!TextUtils.isEmpty(meta.minVersion) && PluginsController.compareVersions(
+                org.telegram.messenger.BuildConfig.BUILD_VERSION_STRING, meta.minVersion) < 0) {
+            sb.append("\n\n⚠ Требуется версия ").append(meta.minVersion).append("+");
+        }
+        org.telegram.ui.ActionBar.AlertDialog.Builder builder =
+                new org.telegram.ui.ActionBar.AlertDialog.Builder(activity);
+        builder.setTitle("Установить плагин?");
+        builder.setMessage(sb.toString());
+        builder.setPositiveButton("Установить", (dialog, which) -> {
+            dialog.dismiss();
+            PluginInfo installed = PluginsController.getInstance().installFromFile(file);
+            BaseFragment last = org.telegram.plugins.PluginUtils.getLastFragment();
+            if (installed != null && last != null) {
+                last.presentFragment(new PluginSettingsActivity(installed.id));
+            } else if (installed != null) {
+                BulletinFactory.global().createSuccessBulletin(
+                        "Плагин «" + installed.displayName() + "» установлен").show();
+            } else {
+                BulletinFactory.global().createErrorBulletin("Не удалось установить плагин").show();
+            }
+        });
+        builder.setNegativeButton("Отмена", (dialog, which) -> dialog.dismiss());
+        builder.show();
+        return true;
     }
 
     @Override

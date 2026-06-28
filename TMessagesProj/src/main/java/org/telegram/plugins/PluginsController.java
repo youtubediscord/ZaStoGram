@@ -57,7 +57,7 @@ public class PluginsController {
     private final Map<String, PluginContext> contexts = new HashMap<>();
 
     private static final Pattern META_PATTERN =
-            Pattern.compile("^__(\\w+)__\\s*=\\s*(?:'([^']*)'|\"([^\"]*)\")");
+            Pattern.compile("^__(\\w+)__\\s*=\\s*(?:'((?:[^'\\\\]|\\\\.)*)'|\"((?:[^\"\\\\]|\\\\.)*)\")");
 
     public static PluginsController getInstance() {
         PluginsController local = instance;
@@ -156,6 +156,9 @@ public class PluginsController {
         Set<String> seen = new HashSet<>();
         // 1) Indexed plugins (carry their persisted enabled flag).
         for (String id : ids) {
+            if (!isValidId(id)) {
+                continue;
+            }
             File f = new File(pluginsDir(), id + ".plugin");
             if (!f.exists()) {
                 continue;
@@ -185,7 +188,7 @@ public class PluginsController {
                     continue;
                 }
                 String id = fn.substring(0, fn.length() - ".plugin".length());
-                if (seen.contains(id)) {
+                if (seen.contains(id) || !isValidId(id)) {
                     continue;
                 }
                 PluginInfo info = parseMetadata(f);
@@ -223,17 +226,21 @@ public class PluginsController {
     public static PluginInfo parseMetadata(File file) {
         PluginInfo info = new PluginInfo();
         boolean found = false;
-        try (BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(file)))) {
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(
+                new FileInputStream(file), java.nio.charset.StandardCharsets.UTF_8))) {
             String line;
             int scanned = 0;
             while ((line = r.readLine()) != null && scanned < 200) {
                 scanned++;
-                Matcher m = META_PATTERN.matcher(line.trim());
+                if (scanned == 1 && !line.isEmpty() && line.charAt(0) == '﻿') {
+                    line = line.substring(1); // strip UTF-8 BOM (mirrors Python _read_source utf-8-sig)
+                }
+                Matcher m = META_PATTERN.matcher(line); // not trim(): keep the ^ anchor at column 0 (module-level only)
                 if (!m.find()) {
                     continue;
                 }
                 String key = m.group(1);
-                String value = m.group(2) != null ? m.group(2) : m.group(3);
+                String value = unescapePy(m.group(2) != null ? m.group(2) : m.group(3));
                 found = true;
                 switch (key) {
                     case "id": info.id = value; break;
@@ -250,6 +257,29 @@ public class PluginsController {
             FileLog.e(t);
         }
         return found ? info : null;
+    }
+
+    /** Unescape a Python string-literal body (\\', \\", \\\\, \\n, \\t, ...) captured by META_PATTERN. */
+    private static String unescapePy(String s) {
+        if (s == null || s.indexOf('\\') < 0) {
+            return s;
+        }
+        StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '\\' && i + 1 < s.length()) {
+                char n = s.charAt(++i);
+                switch (n) {
+                    case 'n': sb.append('\n'); break;
+                    case 't': sb.append('\t'); break;
+                    case 'r': sb.append('\r'); break;
+                    default: sb.append(n); break; // \' \" \\ etc -> the literal next char
+                }
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
     }
 
     // ------------------------------------------------------------------ install / enable / delete
@@ -271,7 +301,7 @@ public class PluginsController {
             File tmp = new File(pluginsDir(), "_import_" + System.currentTimeMillis() + ".tmp");
             copy(in, tmp);
             PluginInfo meta = parseMetadata(tmp);
-            if (meta == null || TextUtils.isEmpty(meta.id)) {
+            if (meta == null || TextUtils.isEmpty(meta.id) || !isValidId(meta.id)) {
                 //noinspection ResultOfMethodCallIgnored
                 tmp.delete();
                 return null;
@@ -548,6 +578,11 @@ public class PluginsController {
             }
         }
         return null;
+    }
+
+    /** Whitelist plugin ids so an untrusted __id__ cannot escape files/plugins via path separators. */
+    private static boolean isValidId(String id) {
+        return id != null && id.matches("^[A-Za-z0-9._-]{1,64}$") && !id.equals(".") && !id.equals("..");
     }
 
     public boolean isCompatible(PluginInfo info) {

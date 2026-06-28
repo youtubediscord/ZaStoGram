@@ -3657,7 +3657,7 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
         currentWssRoute = selectedWssRoute;
         std::string wssConnectHost = currentWssRoute.relayIp;
         uint16_t wssConnectPort = currentWssRoute.relayPort;
-        if (currentWssRoute.upstreamSocksEnabled && !currentWssRoute.socks5OverWss) {
+        if (currentWssRoute.upstreamSocksEnabled) {
             wssConnectHost = currentWssRoute.upstreamSocksAddress;
             wssConnectPort = currentWssRoute.upstreamSocksPort == 0 ? 1080 : currentWssRoute.upstreamSocksPort;
             if (LOGS_ENABLED) DEBUG_D("connection(%p) wss_startup connect_via_socks socks=%s:%u relay=%s:%u domain=%s", this, wssConnectHost.c_str(), (uint32_t) wssConnectPort, currentWssRoute.relayIp.c_str(), (uint32_t) currentWssRoute.relayPort, currentWssRoute.domain.c_str());
@@ -3979,7 +3979,7 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
     publishProxyConnectionStage("connect_start");
     if (LOGS_ENABLED) {
         if (currentTransportWss) {
-            DEBUG_D("connection(%p) wss_startup connect_start mode=%d gateway=%d relay=%s:%u domain=%s path=%s target=%s:%u socks=%d upstream_socks=%s:%u upstream_enabled=%d", this, (int) currentWssRoute.mode, (int) currentWssRoute.gatewayMode, currentWssRoute.relayIp.c_str(), (unsigned int) currentWssRoute.relayPort, currentWssRoute.domain.c_str(), currentWssRoute.path.c_str(), currentAddress.c_str(), (unsigned int) currentPort, currentWssRoute.socks5OverWss ? 1 : 0, currentWssRoute.upstreamSocksAddress.c_str(), (unsigned int) currentWssRoute.upstreamSocksPort, currentWssRoute.upstreamSocksEnabled ? 1 : 0);
+            DEBUG_D("connection(%p) wss_startup connect_start mode=%d gateway=%d relay=%s:%u domain=%s path=%s target=%s:%u upstream_socks=%s:%u upstream_enabled=%d", this, (int) currentWssRoute.mode, (int) currentWssRoute.gatewayMode, currentWssRoute.relayIp.c_str(), (unsigned int) currentWssRoute.relayPort, currentWssRoute.domain.c_str(), currentWssRoute.path.c_str(), currentAddress.c_str(), (unsigned int) currentPort, currentWssRoute.upstreamSocksAddress.c_str(), (unsigned int) currentWssRoute.upstreamSocksPort, currentWssRoute.upstreamSocksEnabled ? 1 : 0);
         } else {
             DEBUG_D("connection(%p) mtproxy_startup connect_start proxy_state=%d secret_kind=%s is_faketls=%d domain_len=%d profile=%s effective_profile=%s clienthello_fragment=%d connection_pattern=%s record_sizing=%d timing=%d startup_cover=%d address=%s port=%u", this, (int) proxyAuthState, currentSecretKind, currentSecretIsFakeTls ? 1 : 0, (int) currentSecretDomain.size(), mtProxyTlsProfileName(currentProxyTlsProfile), mtProxyTlsProfileName(currentEffectiveProxyTlsProfile), currentClientHelloFragmentation, mtProxyConnectionPatternModeName(currentConnectionPatternMode), currentRecordSizingMode, currentTimingMode, currentStartupCoverMode, currentAddress.c_str(), (unsigned int) currentPort);
         }
@@ -4392,7 +4392,10 @@ void ConnectionSocket::onEvent(uint32_t events) {
             return;
         }
         if (events & EPOLLERR) {
-            if (LOGS_ENABLED) DEBUG_E("connection(%p) wss epoll error", this);
+            int32_t error = -1;
+            checkSocketError(&error);
+            if (LOGS_ENABLED) DEBUG_E("connection(%p) wss epoll error code=%d", this, error);
+            closeSocket(1, error);
             return;
         }
         return;
@@ -4944,7 +4947,10 @@ void ConnectionSocket::onEvent(uint32_t events) {
         return;
     }
     if (events & EPOLLERR) {
-        if (LOGS_ENABLED) DEBUG_E("connection(%p) epoll error", this);
+        int32_t error = -1;
+        checkSocketError(&error);
+        if (LOGS_ENABLED) DEBUG_E("connection(%p) epoll error code=%d", this, error);
+        closeSocket(1, error);
         return;
     }
 }

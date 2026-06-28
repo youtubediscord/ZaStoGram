@@ -20,7 +20,6 @@ struct WssRouteConfig {
     std::string path = "/apiws";
     std::string targetAddress;
     uint16_t targetPort = 443;
-    bool socks5OverWss = false;
     std::string upstreamSocksAddress;
     uint16_t upstreamSocksPort = 1080;
     std::string upstreamSocksUsername;
@@ -74,16 +73,6 @@ private:
         TlsHandshake,
         HttpWrite,
         HttpRead,
-        GatewaySocksGreetingWrite,
-        GatewaySocksGreetingRead,
-        GatewaySocksConnectWrite,
-        GatewaySocksConnectRead,
-        UpstreamSocksGreetingWrite,
-        UpstreamSocksGreetingRead,
-        UpstreamSocksPasswordAuthWrite,
-        UpstreamSocksPasswordAuthRead,
-        UpstreamSocksConnectWrite,
-        UpstreamSocksConnectRead,
         Ready,
         Closed,
     };
@@ -95,7 +84,6 @@ private:
     std::vector<uint8_t> pendingOutput;
     size_t pendingOutputOffset = 0;
     std::vector<uint8_t> inputBuffer;
-    std::vector<uint8_t> socksInputBuffer;
 
     bool pump(std::vector<std::vector<uint8_t>> &payloads, std::string *diagnostic);
     bool pumpTls(std::string *diagnostic);
@@ -106,16 +94,12 @@ private:
     bool flushPending(std::string *diagnostic);
     bool readIntoBuffer(std::string *diagnostic);
     bool readRawIntoBuffer(std::string *diagnostic);
-    bool collectSocksPayloads(std::string *diagnostic);
     bool isTcpSocksWriteState() const;
     bool isTcpSocksReadState() const;
     bool parseRawSocksGreetingResponse(std::string *diagnostic, bool &passwordSelected);
     bool parseRawSocksPasswordAuthResponse(std::string *diagnostic);
     bool parseRawSocksConnectResponse(std::string *diagnostic);
     bool parseHttpResponse(std::string *diagnostic);
-    bool parseSocksGreetingResponse(std::string *diagnostic, bool allowPassword, bool &passwordSelected);
-    bool parseSocksPasswordAuthResponse(std::string *diagnostic);
-    bool parseSocksConnectResponse(std::string *diagnostic);
     bool parseWebSocketFrames(std::vector<std::vector<uint8_t>> &payloads, std::string *diagnostic);
     void queueWebSocketFrame(uint8_t opcode, const uint8_t *data, uint32_t size);
     void closeTransport();

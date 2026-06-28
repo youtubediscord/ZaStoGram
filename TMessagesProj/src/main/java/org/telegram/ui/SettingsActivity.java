@@ -690,20 +690,8 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         items.add(UItem.asHeader("ZaStoGram"));
         items.add(SettingCell.Factory.of(1001, IconBackgroundColors.GREEN.top, IconBackgroundColors.GREEN.bottom, R.drawable.settings_privacy, "Приватность", "Удалённые, самоуничтожение, view-once, скриншоты, реклама"));
         items.add(SettingCell.Factory.of(1003, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.settings_folders, "Плагины", "Python-плагины (совместимы с exteraGram)"));
-        items.add(UItem.asShadow(null));
-        // ZaStoGram — бесплатные прокси-каналы вынесены в отдельный раздел наверху (рядом с приватностью).
-        items.add(UItem.asHeader(getString(R.string.FreeProxyChannels)));
-        // Дубль «Настройки прокси» рядом с каталогом — быстро отключить нерабочий прокси, не уходя в общие настройки.
-        items.add(SettingCell.Factory.of(1002, IconBackgroundColors.BLUE.top, IconBackgroundColors.BLUE.bottom, R.drawable.settings_data, getString(R.string.ProxySettings), null));
-        items.add(SettingCell.Factory.of(27, IconBackgroundColors.GREEN.top, IconBackgroundColors.GREEN.bottom, R.drawable.settings_privacy, getString(R.string.ZapretVpnSponsorSetting), null, getString(SharedConfig.showZapretVpnSponsor ? R.string.ZapretProxySponsorOn : R.string.ZapretProxySponsorOff)));
-        items.add(SettingCell.Factory.of(28, IconBackgroundColors.BLUE.top, IconBackgroundColors.BLUE.bottom, R.drawable.settings_channel, getString(R.string.FreeProxyMtProxyEveryday)));
-        items.add(SettingCell.Factory.of(29, IconBackgroundColors.BLUE_LIGHT.top, IconBackgroundColors.BLUE_LIGHT.bottom, R.drawable.settings_channel, getString(R.string.FreeProxyProxyMtProto)));
-        items.add(SettingCell.Factory.of(30, IconBackgroundColors.CYAN.top, IconBackgroundColors.CYAN.bottom, R.drawable.settings_channel, getString(R.string.FreeProxyProxyFreeRu)));
-        items.add(SettingCell.Factory.of(31, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.settings_channel, getString(R.string.FreeProxyTgMtProxyLol)));
-        items.add(SettingCell.Factory.of(32, IconBackgroundColors.ORANGE.top, IconBackgroundColors.ORANGE.bottom, R.drawable.settings_channel, getString(R.string.FreeProxyMemtproxy)));
-        items.add(SettingCell.Factory.of(33, IconBackgroundColors.ORANGE_DEEP.top, IconBackgroundColors.ORANGE_DEEP.bottom, R.drawable.settings_channel, getString(R.string.FreeProxyTProxyRu)));
-        items.add(SettingCell.Factory.of(34, IconBackgroundColors.BLUE_ALT.top, IconBackgroundColors.BLUE_ALT.bottom, R.drawable.settings_channel, getString(R.string.FreeProxyProxyFreeMTProto)));
-        items.add(SettingCell.Factory.of(35, IconBackgroundColors.GREEN.top, IconBackgroundColors.GREEN.bottom, R.drawable.settings_channel, getString(R.string.FreeProxyTelMTProto)));
+        // ZaStoGram — каталог бесплатных прокси вынесен на отдельный экран (FreeProxySettingsActivity).
+        items.add(SettingCell.Factory.of(1004, IconBackgroundColors.BLUE.top, IconBackgroundColors.BLUE.bottom, R.drawable.settings_data, getString(R.string.FreeProxyChannels), "Каталог каналов и настройки прокси"));
         items.add(UItem.asShadow(null));
         items.add(SettingCell.Factory.of(1, IconBackgroundColors.BLUE.top, IconBackgroundColors.BLUE.bottom, R.drawable.settings_account, getString(R.string.SettingsAccount), getString(R.string.SettingsAccountInfo)));
         items.add(SettingCell.Factory.of(2, IconBackgroundColors.ORANGE.top, IconBackgroundColors.ORANGE.bottom, R.drawable.settings_chat, getString(R.string.SettingsChat), getString(R.string.SettingsChatInfo)));
@@ -852,8 +840,8 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             case 1003:
                 presentSettingFragment(new org.telegram.ui.Plugins.PluginsActivity());
                 break;
-            case 1002:
-                presentSettingFragment(new ProxyListActivity());
+            case 1004:
+                presentSettingFragment(new FreeProxySettingsActivity());
                 break;
             case 7:
                 presentSettingFragment(new FiltersSetupActivity());
@@ -899,36 +887,6 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             case 25:
                 Browser.openUrl(getParentActivity(), "https://t.me/vpndiscordyooutube");
                 break;
-            case 27:
-                SharedConfig.showZapretVpnSponsor = !SharedConfig.showZapretVpnSponsor;
-                SharedConfig.saveConfig();
-                listView.adapter.update(true);
-                break;
-            case 28:
-                Browser.openUrl(getParentActivity(), "https://t.me/MTProxy_everyday");
-                break;
-            case 29:
-                Browser.openUrl(getParentActivity(), "https://t.me/ProxyMTProto");
-                break;
-            case 30:
-                Browser.openUrl(getParentActivity(), "https://t.me/ProxyFree_Ru");
-                break;
-            case 31:
-                Browser.openUrl(getParentActivity(), "https://t.me/tgmtproxylol");
-                break;
-            case 32:
-                Browser.openUrl(getParentActivity(), "https://t.me/memtproxy");
-                break;
-            case 33:
-                Browser.openUrl(getParentActivity(), "https://t.me/TProxyRU");
-                break;
-            case 34:
-                Browser.openUrl(getParentActivity(), "https://t.me/ProxyFreeMTProto");
-                break;
-            case 35:
-                Browser.openUrl(getParentActivity(), "https://t.me/TelMTProto");
-                break;
-
             case 20:
                 ProfileActivity.sendLogs(getParentActivity(), false);
                 break;

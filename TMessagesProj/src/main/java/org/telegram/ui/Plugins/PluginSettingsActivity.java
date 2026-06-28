@@ -430,7 +430,12 @@ public class PluginSettingsActivity extends BaseFragment implements Notification
                 case "input": {
                     TextCell cell = (TextCell) holder.itemView;
                     cell.setColors(Theme.key_windowBackgroundWhiteGrayIcon, Theme.key_windowBackgroundWhiteBlackText);
-                    cell.setTextAndValue(asStr(m.get("text")), asStr(m.get("value")), dividerBelow);
+                    int inputIcon = resolveIcon(m.get("icon"));
+                    if (inputIcon != 0) {
+                        cell.setTextAndValueAndIcon(asStr(m.get("text")), asStr(m.get("value")), inputIcon, dividerBelow);
+                    } else {
+                        cell.setTextAndValue(asStr(m.get("text")), asStr(m.get("value")), dividerBelow);
+                    }
                     cell.setSubtitle(asStr(m.get("subtext"))); // always set so a recycled cell can't keep a stale subtitle
                     break;
                 }
@@ -448,7 +453,9 @@ public class PluginSettingsActivity extends BaseFragment implements Notification
                 default: { // "text"
                     TextCell cell = (TextCell) holder.itemView;
                     boolean red = asBool(m.get("red"));
-                    int colorKey = red ? Theme.key_text_RedRegular : Theme.key_windowBackgroundWhiteBlackText;
+                    boolean accent = asBool(m.get("accent"));
+                    int colorKey = red ? Theme.key_text_RedRegular
+                            : (accent ? Theme.key_windowBackgroundWhiteBlueText : Theme.key_windowBackgroundWhiteBlackText);
                     cell.setColors(red ? Theme.key_text_RedRegular : Theme.key_windowBackgroundWhiteGrayIcon, colorKey);
                     int icon = resolveIcon(m.get("icon"));
                     if (icon != 0) {

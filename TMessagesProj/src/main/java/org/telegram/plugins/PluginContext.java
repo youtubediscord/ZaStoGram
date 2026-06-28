@@ -126,6 +126,9 @@ public class PluginContext {
             if (def instanceof Float) {
                 return p.getFloat(key, (Float) def);
             }
+            if (def instanceof Double) {
+                return Double.longBitsToDouble(p.getLong(key, Double.doubleToRawLongBits((Double) def)));
+            }
             return p.getString(key, def == null ? null : def.toString());
         } catch (Throwable t) {
             return def;
@@ -143,6 +146,10 @@ public class PluginContext {
                 e.putLong(key, (Long) value);
             } else if (value instanceof Float) {
                 e.putFloat(key, (Float) value);
+            } else if (value instanceof Double) {
+                // Chaquopy maps a Python float to java.lang.Double; SharedPreferences has no
+                // putDouble, so store the exact bit pattern as a long.
+                e.putLong(key, Double.doubleToRawLongBits((Double) value));
             } else {
                 e.putString(key, value == null ? null : value.toString());
             }
