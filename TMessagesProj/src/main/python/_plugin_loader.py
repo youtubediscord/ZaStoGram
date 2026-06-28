@@ -16,7 +16,8 @@ CANCEL_SENTINEL = "__zasto_cancel__"
 
 
 def _read_source(path):
-    with open(path, "r", encoding="utf-8") as f:
+    # utf-8-sig so a leading BOM (common from Windows editors) is stripped, not fed to compile().
+    with open(path, "r", encoding="utf-8-sig") as f:
         return f.read()
 
 
@@ -89,12 +90,12 @@ def get_settings_model(plugin_id):
     if inst is None:
         return out
     try:
-        items = inst.create_settings() or []
+        items = list(inst.create_settings() or [])  # materialize once (create_settings may be a generator)
     except Exception:
         traceback.print_exc()
         return out
 
-    _SETTINGS[plugin_id] = list(items)
+    _SETTINGS[plugin_id] = items
     for idx, item in enumerate(items):
         try:
             model = item.to_model(inst, idx)

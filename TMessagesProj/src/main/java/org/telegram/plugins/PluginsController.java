@@ -245,18 +245,11 @@ public class PluginsController {
                 return null;
             }
             File dest = new File(pluginsDir(), meta.id + ".plugin");
-            // Replacing an existing plugin: the old instance is unloaded on the queue below
-            // (off-queue unload would race the non-thread-safe contexts map).
+            // The old instance unload AND the file write both run on the queue below, so they are
+            // FIFO-ordered with any pending delete (an off-queue file write could be clobbered by a
+            // deletePlugin() that was queued just before a same-id reinstall). The staged temp file
+            // persists on disk until the queued runnable renames it into place.
             PluginInfo existing = findById(meta.id);
-            if (dest.exists()) {
-                //noinspection ResultOfMethodCallIgnored
-                dest.delete();
-            }
-            if (!tmp.renameTo(dest)) {
-                copyFile(tmp, dest);
-                //noinspection ResultOfMethodCallIgnored
-                tmp.delete();
-            }
             meta.filePath = dest.getAbsolutePath();
             meta.enabled = true;
             synchronized (plugins) {
@@ -270,6 +263,23 @@ public class PluginsController {
                 ensurePythonStarted();
                 if (toUnload != null) {
                     unloadPluginInternal(toUnload); // unload OLD on the queue thread, never off it
+                }
+                // Commit the file on the queue so it is ordered after any pending delete.
+                try {
+                    if (dest.exists()) {
+                        //noinspection ResultOfMethodCallIgnored
+                        dest.delete();
+                    }
+                    if (!tmp.renameTo(dest)) {
+                        copyFile(tmp, dest);
+                    }
+                } catch (Throwable t) {
+                    FileLog.e(t);
+                } finally {
+                    if (tmp.exists()) {
+                        //noinspection ResultOfMethodCallIgnored
+                        tmp.delete();
+                    }
                 }
                 if (isCompatible(toLoad)) {
                     loadPluginInternal(toLoad);

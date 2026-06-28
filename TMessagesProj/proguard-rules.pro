@@ -21,11 +21,13 @@
 -keep class org.telegram.tgnet.RequestDelegate { *; }
 
 # ===== ZaStoGram plugin engine =====
-# Plugins import Telegram classes by their full name and reflect on members by name
-# (get_private_field / getDeclaredMethod / hooks). R8 must NOT rename them, or release
-# builds break plugins. -keepnames preserves class+member names while still shrinking
-# genuinely-unused code.
--keepnames class org.telegram.** { *; }
+# Plugins import Telegram classes by full name and reflect on members by name
+# (get_private_field / getDeclaredMethod / hooks). The project already sets -dontobfuscate,
+# so names are preserved; the real risk is R8 *removing* members that only a plugin
+# references reflectively (R8 fullMode tree-shakes per-member). -keep is a shrink root and
+# prevents that across the whole Telegram surface. Cost: larger DEX — the trade-off for an
+# open plugin engine.
+-keep class org.telegram.** { *; }
 # Engine bridge classes are called from Python by name — keep fully.
 -keep class org.telegram.plugins.** { *; }
 # Embedded Python runtime (Chaquopy) and the Pine / Xposed hooking engine use JNI + reflection.
