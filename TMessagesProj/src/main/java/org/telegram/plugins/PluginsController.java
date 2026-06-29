@@ -814,10 +814,15 @@ public class PluginsController {
 
     private static int safeInt(String s) {
         try {
-            // strip any trailing non-digits (e.g. "12a")
             StringBuilder sb = new StringBuilder();
             for (char c : s.toCharArray()) {
-                if (c >= '0' && c <= '9') sb.append(c); else break;
+                if (c >= '0' && c <= '9') {
+                    sb.append(c);
+                } else if (sb.length() == 0) {
+                    continue; // skip a leading operator/sign (">=", "v", whitespace) before digits
+                } else {
+                    break; // stop at the first trailing non-digit (e.g. "13rc")
+                }
             }
             return sb.length() == 0 ? 0 : Integer.parseInt(sb.toString());
         } catch (Throwable t) {

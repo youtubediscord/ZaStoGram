@@ -30,6 +30,8 @@
 -keep class org.telegram.** { *; }
 # Engine bridge classes are called from Python by name — keep fully.
 -keep class org.telegram.plugins.** { *; }
+# exteraGram-compatibility bridge classes imported by community plugins (com.exteragram.messenger.*).
+-keep class com.exteragram.messenger.plugins.** { *; }
 # Embedded Python runtime (Chaquopy) and the Pine / Xposed hooking engine use JNI + reflection.
 -keep class com.chaquo.python.** { *; }
 -keep class top.canyie.pine.** { *; }

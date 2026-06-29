@@ -234,7 +234,7 @@ def dispatch_updates(container_name, account, updates):
     """on_updates_hook (container; CANCEL skips the whole batch) + per-update on_update_hook (observe/modify)."""
     from base_plugin import BasePlugin, HookStrategy
 
-    # Container-level hook.
+    # Container-level hook (CANCEL skips the batch; MODIFY replaces updates.updates).
     for inst in list(_INSTANCES.values()):
         if type(inst).on_updates_hook is BasePlugin.on_updates_hook:
             continue
@@ -248,13 +248,20 @@ def dispatch_updates(container_name, account, updates):
         strategy = getattr(result, "strategy", HookStrategy.DEFAULT)
         if strategy == HookStrategy.CANCEL:
             return True
-        if strategy == HookStrategy.MODIFY_FINAL:
-            break
+        if strategy in (HookStrategy.MODIFY, HookStrategy.MODIFY_FINAL):
+            new_updates = getattr(result, "updates", None)
+            if new_updates is not None:
+                try:
+                    updates.updates = new_updates
+                except Exception:
+                    pass
+            if strategy == HookStrategy.MODIFY_FINAL:
+                break
 
-    # Per-update hook (observation / in-place modify). updates.updates (list) or updates.update (single).
+    # Per-update hook. A MODIFY .update replacement is written back into the container.
     try:
-        items = []
         update_list = getattr(updates, "updates", None)
+        items = []
         if update_list is not None:
             for i in range(update_list.size()):
                 items.append(update_list.get(i))
@@ -262,18 +269,36 @@ def dispatch_updates(container_name, account, updates):
             single = getattr(updates, "update", None)
             if single is not None:
                 items = [single]
-        for upd in items:
+        for idx, upd in enumerate(items):
             try:
                 uname = upd.getClass().getSimpleName()
             except Exception:
                 continue
+            current_upd = upd
             for inst in list(_INSTANCES.values()):
                 if type(inst).on_update_hook is BasePlugin.on_update_hook:
                     continue
                 try:
-                    inst.on_update_hook(uname, account, upd)
+                    res = inst.on_update_hook(uname, account, current_upd)
                 except Exception:
                     traceback.print_exc()
+                    continue
+                if res is None:
+                    continue
+                strat = getattr(res, "strategy", HookStrategy.DEFAULT)
+                if strat in (HookStrategy.MODIFY, HookStrategy.MODIFY_FINAL):
+                    new_upd = getattr(res, "update", None)
+                    if new_upd is not None:
+                        current_upd = new_upd
+                        try:
+                            if update_list is not None:
+                                update_list.set(idx, new_upd)
+                            else:
+                                updates.update = new_upd
+                        except Exception:
+                            pass
+                    if strat == HookStrategy.MODIFY_FINAL:
+                        break
     except Exception:
         pass
     return False
@@ -317,10 +342,12 @@ def dispatch_post_request(req_name, account, response, error):
         strategy = getattr(result, "strategy", HookStrategy.DEFAULT)
         if strategy == HookStrategy.CANCEL:
             return CANCEL_SENTINEL
-        if strategy == HookStrategy.MODIFY:
+        if strategy in (HookStrategy.MODIFY, HookStrategy.MODIFY_FINAL):
             new_response = getattr(result, "response", None)
             if new_response is not None:
                 current = new_response
+            if strategy == HookStrategy.MODIFY_FINAL:
+                break
     return current
 
 
