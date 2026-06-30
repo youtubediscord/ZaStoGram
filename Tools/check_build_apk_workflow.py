@@ -131,6 +131,7 @@ def check_workflow(workflow_text: str) -> list[str]:
         "TMessagesProj_AppStandalone/build/outputs/apk/${{ matrix.flavor_dir }}/standalone",
         "dist/${{ matrix.artifact }}.apk",
         "python3 Tools/check_mtproxy_all.py",
+        "python3 Tools/check_plugin_python_deps.py",
         "python3 Tools/check_plugin_utils_javadoc.py",
         "python3 Tools/check_zasto_edit_history_contract.py",
         "release:",

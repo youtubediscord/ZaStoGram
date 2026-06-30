@@ -133,6 +133,9 @@ jobs:
       - name: Check MTProxy architecture guards
         run: python3 Tools/check_mtproxy_all.py
 
+      - name: Check plugin Python dependency guard
+        run: python3 Tools/check_plugin_python_deps.py
+
       - name: Check PluginUtils JavaDoc guard
         run: python3 Tools/check_plugin_utils_javadoc.py
 

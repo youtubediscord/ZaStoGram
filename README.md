@@ -88,6 +88,7 @@ python3 Tools/check_contacts_permission_prompt.py
 python3 Tools/check_splash_icon.py
 python3 Tools/check_settings_durov_links.py
 python3 Tools/check_zapret_proxy_sponsor.py
+python3 Tools/check_plugin_python_deps.py
 python3 Tools/check_plugin_utils_javadoc.py
 python3 Tools/check_build_apk_workflow.py
 ```
@@ -149,6 +150,8 @@ python3 Tools/check_build_apk_workflow.py
   отдельно для каждого id плагина;
 - доступны helper-модули `client_utils`, `android_utils`, `hook_utils`,
   `file_utils`, `ui.alert` и `ui.bulletin`;
+- в APK заранее кладутся Python-зависимости `requests`, `Pillow`/`PIL` и
+  `pyfiglet`, потому что runtime-установки через pip на устройстве нет;
 - хуки Java-методов работают через Pine с Xposed-совместимым API:
   `MethodHook`, `XposedHook`, `hook_method()` и `hook_all_constructors()`;
 - для сетевых запросов сейчас подключён post-response hook:
