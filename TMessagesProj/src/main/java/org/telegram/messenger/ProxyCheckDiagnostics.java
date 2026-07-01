@@ -224,11 +224,20 @@ public class ProxyCheckDiagnostics {
     }
 
     public static boolean shouldKeepFreshFailure(SharedConfig.ProxyInfo proxyInfo, String incomingDiagnostic) {
+        return shouldKeepFreshFailure(proxyInfo, incomingDiagnostic, 0, false);
+    }
+
+    public static boolean shouldKeepFreshFailure(SharedConfig.ProxyInfo proxyInfo, String incomingDiagnostic, int incomingActivationGeneration) {
+        return shouldKeepFreshFailure(proxyInfo, incomingDiagnostic, incomingActivationGeneration, true);
+    }
+
+    private static boolean shouldKeepFreshFailure(SharedConfig.ProxyInfo proxyInfo, String incomingDiagnostic, int incomingActivationGeneration, boolean requireActivationGenerationMatch) {
         return proxyInfo != null
                 && proxyInfo.lastCheckDiagnosticTime != 0
                 && android.os.SystemClock.elapsedRealtime() - proxyInfo.lastCheckDiagnosticTime < FAILURE_HOLD_EARLY_RETRY_MS
                 && isFailure(proxyInfo.lastCheckDiagnostic)
-                && isWeakRetryLivePhase(incomingDiagnostic);
+                && isWeakRetryLivePhase(incomingDiagnostic)
+                && (!requireActivationGenerationMatch || incomingActivationGeneration == proxyInfo.lastCheckActivationGeneration);
     }
 
     static long freshFailureHoldEarlyRetryMs() {

@@ -451,6 +451,7 @@ public class SharedConfig {
         public long availableCheckTime;
         public String lastCheckDiagnostic = ProxyCheckDiagnostics.UNKNOWN_FAIL;
         public long lastCheckDiagnosticTime;
+        public int lastCheckActivationGeneration;
 
         // Live, in-memory only (never serialized): quality + geo shown in the proxy list.
         public long downloadSpeed;       // bytes/sec through the active connection; 0 = unknown

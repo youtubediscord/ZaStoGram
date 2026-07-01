@@ -67,7 +67,7 @@ public final class ProxyRuntimeStateStore {
         synchronized (ProxyRuntimeStateStore.class) {
             floor = proxyActivationGenerationFloor[event.account];
         }
-        return floor > 0 && event.activationGeneration < floor;
+        return floor > 0 && event.activationGeneration != floor;
     }
 
     static Decision quarantineAndCancelEndpoint(SharedConfig.ProxyInfo proxyInfo, String phase, String endpointKey, String probeKey, long now, String source, ProxyConnectionEvent.Origin origin, int account, boolean visibleChanged) {
@@ -188,11 +188,15 @@ public final class ProxyRuntimeStateStore {
     }
 
     public static void markConnectionUsable(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now) {
+        markConnectionUsable(proxyInfo, diagnostic, now, 0);
+    }
+
+    public static void markConnectionUsable(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now, int activationGeneration) {
         if (proxyInfo == null) {
             return;
         }
         String normalized = ProxyCheckDiagnostics.normalize(diagnostic);
-        if (!ProxyVisibleStateStore.markConnectionUsable(proxyInfo, normalized, now)) {
+        if (!ProxyVisibleStateStore.markConnectionUsable(proxyInfo, normalized, now, activationGeneration)) {
             return;
         }
         ProxyHealthStore.clearEndpointBackoff(proxyInfo, normalized, now);

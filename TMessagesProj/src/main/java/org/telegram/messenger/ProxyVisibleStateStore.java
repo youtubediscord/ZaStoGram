@@ -15,6 +15,7 @@ final class ProxyVisibleStateStore {
     private static long pendingDnsVisibleStartedAtMs;
     private static String lastVisibleProbeWaitEndpointKey = "";
     private static String lastVisibleProbeWaitProbeKey = "";
+    private static int lastVisibleProbeWaitActivationGeneration;
     private static long lastVisibleProbeWaitAtMs;
 
     private ProxyVisibleStateStore() {
@@ -125,7 +126,7 @@ final class ProxyVisibleStateStore {
         if (shouldHoldVisiblePhaseByFreshFailure(proxyInfo, event)) {
             return false;
         }
-        ProxyStatusMirror.mirrorVisiblePhase(proxyInfo, visiblePhase, event.timestamp);
+        ProxyStatusMirror.mirrorVisiblePhase(proxyInfo, visiblePhase, event.timestamp, event.activationGeneration);
         return true;
     }
 
@@ -139,12 +140,14 @@ final class ProxyVisibleStateStore {
         }
         String probeKey = event.probeKey == null ? "" : event.probeKey;
         boolean sameProbe = ProxyEndpointKey.sameTelemetryEndpointKey(lastVisibleProbeWaitEndpointKey, endpointKey)
-                && probeKey.equals(lastVisibleProbeWaitProbeKey);
+                && probeKey.equals(lastVisibleProbeWaitProbeKey)
+                && event.activationGeneration == lastVisibleProbeWaitActivationGeneration;
         if (sameProbe && event.timestamp - lastVisibleProbeWaitAtMs < PROBE_WAIT_VISIBLE_REPEAT_MS) {
             return true;
         }
         lastVisibleProbeWaitEndpointKey = endpointKey;
         lastVisibleProbeWaitProbeKey = probeKey;
+        lastVisibleProbeWaitActivationGeneration = event.activationGeneration;
         lastVisibleProbeWaitAtMs = event.timestamp;
         return false;
     }
@@ -152,6 +155,7 @@ final class ProxyVisibleStateStore {
     static void resetProbeWaitCoalescing() {
         lastVisibleProbeWaitEndpointKey = "";
         lastVisibleProbeWaitProbeKey = "";
+        lastVisibleProbeWaitActivationGeneration = 0;
         lastVisibleProbeWaitAtMs = 0;
     }
 
@@ -159,7 +163,7 @@ final class ProxyVisibleStateStore {
         if (proxyInfo == null || event == null) {
             return false;
         }
-        if (!ProxyCheckDiagnostics.shouldKeepFreshFailure(proxyInfo, event.phase)) {
+        if (!ProxyCheckDiagnostics.shouldKeepFreshFailure(proxyInfo, event.phase, event.activationGeneration)) {
             return false;
         }
         ProxyRuntimeStateStore.logControl("decision=held_by_fresh_failure source=" + event.source + " account=" + event.account + " phase=" + event.phase + " endpoint=" + event.endpointKey + " held_by=" + ProxyStatusMirror.diagnostic(proxyInfo));
@@ -226,7 +230,7 @@ final class ProxyVisibleStateStore {
         ProxyRuntimeStateStore.logControl("decision=visible_only source=" + ProxyConnectionEvent.SOURCE_CONNECT_START + " origin=" + origin.wireName + " phase=" + ProxyCheckDiagnostics.CONNECT_START + " endpoint=" + ProxyEndpointKey.liveStage(proxyInfo));
     }
 
-    static boolean markConnectionUsable(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now) {
+    static boolean markConnectionUsable(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now, int activationGeneration) {
         if (proxyInfo == null) {
             return false;
         }
@@ -236,7 +240,7 @@ final class ProxyVisibleStateStore {
             ProxyRuntimeStateStore.logControl("decision=ignored_rotated_away source=usable_success phase=" + normalized + " endpoint=" + ProxyEndpointKey.liveStage(proxyInfo));
             return false;
         }
-        ProxyStatusMirror.markConnectionUsable(proxyInfo, normalized, now);
+        ProxyStatusMirror.markConnectionUsable(proxyInfo, normalized, now, activationGeneration);
         ProxyStatusMirror.clearTransientState(proxyInfo);
         return true;
     }

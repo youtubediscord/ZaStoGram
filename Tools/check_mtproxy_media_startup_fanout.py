@@ -164,7 +164,7 @@ def main():
     loader_delay = method_body(loader, "private boolean maybeDelayProxyStartupLoadFile")
     media_delay = method_body(media, "private boolean delayProxyWarmupPrefetch")
     stories_delay = method_body(stories, "private boolean delayProxyWarmupPrefetch")
-    mark_usable = method_body(runtime, "public static void markConnectionUsable(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now)")
+    mark_usable = method_body(runtime, "public static void markConnectionUsable(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now, int activationGeneration)")
     mark_failure = method_body(runtime, "public static ProxyHealthStore.EndpointFailureResult markEndpointFailure")
 
     require(

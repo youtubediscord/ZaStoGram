@@ -63,7 +63,7 @@ final class ProxyEventReducer {
         }
         ProxyWarmupGate.onProxyLivePhase(event.endpointKey, verdict.phase, event.timestamp);
         if (verdict.usableSuccess) {
-            ProxyRuntimeStateStore.markConnectionUsable(currentProxy, event.phase, event.timestamp);
+            ProxyRuntimeStateStore.markConnectionUsable(currentProxy, event.phase, event.timestamp, event.activationGeneration);
             ProxyRuntimeStateStore.logControl("decision=visible_usable_success source=" + event.source + " origin=" + event.origin.wireName + " account=" + event.account + " phase=" + verdict.phase + " layer=" + verdict.layer + " failure_class=" + verdict.failureClass + " action=" + verdict.action + " endpoint=" + event.endpointKey);
             return new ProxyRuntimeStateStore.Decision("visible_usable_success", verdict.phase, event.endpointKey, verdict, false, true, false);
         }

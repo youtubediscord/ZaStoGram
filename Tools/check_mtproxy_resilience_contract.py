@@ -268,7 +268,7 @@ def main() -> None:
     require(
         "ProxyConnectionEvent.nativeStage" in stage_bridge
         and "ProxyRuntimeStateStore.onNativeStage(event)" in stage_bridge
-        and "ProxyStatusMirror.mirrorVisiblePhase(proxyInfo, visiblePhase, event.timestamp)" in visible_store
+        and "ProxyStatusMirror.mirrorVisiblePhase(proxyInfo, visiblePhase, event.timestamp, event.activationGeneration)" in visible_store
         and "static void mirrorVisiblePhase" in status_mirror
         and "postNotificationName(NotificationCenter.proxyConnectionStageChanged" in stage_bridge,
         "native live stages must update the current proxy and notify the proxy UI immediately",

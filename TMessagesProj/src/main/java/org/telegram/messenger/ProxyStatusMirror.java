@@ -59,6 +59,7 @@ final class ProxyStatusMirror {
         proxyInfo.available = true;
         proxyInfo.lastCheckDiagnostic = ProxyCheckDiagnostics.OK;
         proxyInfo.lastCheckDiagnosticTime = now;
+        proxyInfo.lastCheckActivationGeneration = 0;
     }
 
     static void markConnectionStarting(SharedConfig.ProxyInfo proxyInfo, long now) {
@@ -66,12 +67,16 @@ final class ProxyStatusMirror {
     }
 
     static void markConnectionUsable(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now) {
+        markConnectionUsable(proxyInfo, diagnostic, now, 0);
+    }
+
+    static void markConnectionUsable(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now, int activationGeneration) {
         if (proxyInfo == null) {
             return;
         }
         proxyInfo.available = true;
         proxyInfo.availableCheckTime = now;
-        mirrorVisiblePhase(proxyInfo, diagnostic, now);
+        mirrorVisiblePhase(proxyInfo, diagnostic, now, activationGeneration);
     }
 
     static void markEndpointCooldown(SharedConfig.ProxyInfo proxyInfo, long now) {
@@ -133,10 +138,15 @@ final class ProxyStatusMirror {
     }
 
     static void mirrorVisiblePhase(SharedConfig.ProxyInfo proxyInfo, String phase, long now) {
+        mirrorVisiblePhase(proxyInfo, phase, now, 0);
+    }
+
+    static void mirrorVisiblePhase(SharedConfig.ProxyInfo proxyInfo, String phase, long now, int activationGeneration) {
         if (proxyInfo == null) {
             return;
         }
         proxyInfo.lastCheckDiagnostic = ProxyCheckDiagnostics.normalize(phase);
         proxyInfo.lastCheckDiagnosticTime = now;
+        proxyInfo.lastCheckActivationGeneration = activationGeneration;
     }
 }

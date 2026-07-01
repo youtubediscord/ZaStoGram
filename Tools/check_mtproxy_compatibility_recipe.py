@@ -491,7 +491,7 @@ def main() -> int:
     )
     require(
         "ProxyHealthStore.isEndpointRotatedAway(proxyInfo, now)" in block(visible_store, "static boolean markConnectionUsable", "private static void promotePendingDnsVisiblePhase")
-        and "if (!ProxyVisibleStateStore.markConnectionUsable(proxyInfo, normalized, now))" in block(runtime_store, "public static void markConnectionUsable", "public static ProxyHealthStore.EndpointFailureResult markEndpointFailure")
+        and "if (!ProxyVisibleStateStore.markConnectionUsable(proxyInfo, normalized, now, activationGeneration))" in block(runtime_store, "public static void markConnectionUsable", "public static ProxyHealthStore.EndpointFailureResult markEndpointFailure")
         and "ProxyHealthStore.clearEndpointBackoff(proxyInfo, normalized, now)" in block(runtime_store, "public static void markConnectionUsable", "public static ProxyHealthStore.EndpointFailureResult markEndpointFailure")
         and "source=usable_success" in visible_store,
         "late usable-success callbacks from a rotated-away endpoint must not clear quarantine/backoff",

@@ -60,9 +60,12 @@ def main() -> int:
     visible = read(MESSENGER / "ProxyVisibleStateStore.java")
     health = read(MESSENGER / "ProxyHealthStore.java")
     runtime = read(MESSENGER / "ProxyRuntimeStateStore.java")
+    reducer = read(MESSENGER / "ProxyEventReducer.java")
     event = read(MESSENGER / "ProxyConnectionEvent.java")
     java_connections = read(TGNET_JAVA)
     proxy_scheduler = read(MESSENGER / "ProxyCheckScheduler.java")
+    shared_config = read(MESSENGER / "SharedConfig.java")
+    status_mirror = read(MESSENGER / "ProxyStatusMirror.java")
     proxy_list = read(ROOT / "TMessagesProj/src/main/java/org/telegram/ui/ProxyListActivity.java")
     proxy_settings = read(ROOT / "TMessagesProj/src/main/java/org/telegram/ui/ProxySettingsActivity.java")
     android_utilities = read(MESSENGER / "AndroidUtilities.java")
@@ -75,6 +78,7 @@ def main() -> int:
     wrapper = read(JNI / "TgNetWrapper.cpp")
     values = read(VALUES)
     values_ru = read(VALUES_RU)
+    reducer_body = method_body(reducer, "static ProxyRuntimeStateStore.Decision reduce")
 
     for field in ("layer", "failureClass", "confidence", "action", "userTextKey", "endpointKey", "networkKey"):
         require(f"final String {field}" in verdict, f"ProxyEndpointVerdict must expose {field}", failures)
@@ -146,6 +150,15 @@ def main() -> int:
         "failure UI text must be selected from failureClass taxonomy, not only raw phase strings",
         failures,
     )
+    failure_text = method_body(phase_policy, "static String userTextKeyForFailureClass")
+    require(
+        "FAILURE_CLASS_FAKETLS_NO_SERVER_HELLO" in failure_text
+        and "FAKETLS_SERVER_HELLO_WAIT_TIMEOUT" in failure_text
+        and "SERVER_CLOSED_AFTER_CLIENT_HELLO" in failure_text
+        and "return userTextKeyForPhase(phase)" in failure_text,
+        "faketls no-server-hello failureClass must preserve phase-specific UI keys for timeout and server-close phases",
+        failures,
+    )
 
     missing_map = {
         "MTPROXY_PROBE_WAIT": "ProxyStatusMtproxyProbeWait",
@@ -170,7 +183,7 @@ def main() -> int:
             failures,
         )
 
-    keep_failure = method_body(diagnostics, "public static boolean shouldKeepFreshFailure")
+    keep_failure = method_body(diagnostics, "private static boolean shouldKeepFreshFailure")
     weak_method = method_body(diagnostics, "public static boolean isWeakRetryLivePhase")
     for constant in (
         "MTPROXY_PROBE_WAIT",
@@ -187,6 +200,22 @@ def main() -> int:
     require(
         "isWeakRetryLivePhase(incomingDiagnostic)" in keep_failure,
         "fresh failure hold must use the weak retry/live phase classifier",
+        failures,
+    )
+    require(
+        "shouldKeepFreshFailure(SharedConfig.ProxyInfo proxyInfo, String incomingDiagnostic, int incomingActivationGeneration)" in diagnostics
+        and "incomingActivationGeneration == proxyInfo.lastCheckActivationGeneration" in diagnostics
+        and "ProxyCheckDiagnostics.shouldKeepFreshFailure(proxyInfo, event.phase, event.activationGeneration)" in visible,
+        "fresh failure sticky hold must be bound to the visible failure activation generation",
+        failures,
+    )
+    require(
+        "int lastCheckActivationGeneration" in shared_config
+        and "mirrorVisiblePhase(SharedConfig.ProxyInfo proxyInfo, String phase, long now, int activationGeneration)" in status_mirror
+        and "proxyInfo.lastCheckActivationGeneration = activationGeneration" in status_mirror
+        and "ProxyStatusMirror.mirrorVisiblePhase(proxyInfo, visiblePhase, event.timestamp, event.activationGeneration)" in visible
+        and "ProxyRuntimeStateStore.markConnectionUsable(currentProxy, event.phase, event.timestamp, event.activationGeneration)" in reducer_body,
+        "visible diagnostic state must record the activationGeneration from native socket verdict events",
         failures,
     )
     policy_punitive = method_body(phase_policy, "public static boolean isPunitiveFailure")
@@ -218,7 +247,6 @@ def main() -> int:
             failures,
         )
 
-    reducer_body = method_body(read(MESSENGER / "ProxyEventReducer.java"), "static ProxyRuntimeStateStore.Decision reduce")
     require(
         "ProxyEndpointVerdict verdict = ProxyPhasePolicy.verdictForEvent(event)" in reducer_body
         and "verdict.failureClass" in reducer_body
@@ -236,8 +264,8 @@ def main() -> int:
     )
     require(
         "visiblePhaseForVerdict(verdict)" in reducer_body
-        and "ProxyEndpointVerdict.FAILURE_CLASS_POST_SUCCESS_DATA_PATH_DEGRADED.equals(verdict.failureClass)" in read(MESSENGER / "ProxyEventReducer.java")
-        and "ProxyCheckDiagnostics.DROPPED_AFTER_APPDATA" in read(MESSENGER / "ProxyEventReducer.java"),
+        and "ProxyEndpointVerdict.FAILURE_CLASS_POST_SUCCESS_DATA_PATH_DEGRADED.equals(verdict.failureClass)" in reducer
+        and "ProxyCheckDiagnostics.DROPPED_AFTER_APPDATA" in reducer,
         "post-success degraded verdict must write a visible diagnostic that resolves to the degraded data-path UI text",
         failures,
     )
@@ -264,8 +292,10 @@ def main() -> int:
         "PROBE_WAIT_VISIBLE_REPEAT_MS" in visible
         and "lastVisibleProbeWaitEndpointKey" in visible
         and "lastVisibleProbeWaitProbeKey" in visible
+        and "lastVisibleProbeWaitActivationGeneration" in visible
+        and "event.activationGeneration == lastVisibleProbeWaitActivationGeneration" in visible
         and "resetProbeWaitCoalescing" in visible,
-        "visible state store must coalesce repeated mtproxy_probe_wait per endpoint/probe",
+        "visible state store must coalesce repeated mtproxy_probe_wait per endpoint/probe/generation",
         failures,
     )
 
@@ -294,8 +324,8 @@ def main() -> int:
     stale_generation_method = method_body(runtime, "static boolean shouldIgnoreStaleActivationGeneration")
     require(
         "event.activationGeneration <= 0" not in stale_generation_method
-        and "event.activationGeneration < floor" in stale_generation_method,
-        "activation generation gate must also drop generation-0 stale sockets once a user/settings floor exists",
+        and "event.activationGeneration != floor" in stale_generation_method,
+        "activation generation gate must drop any active socket event whose generation differs from the current account generation",
         failures,
     )
     require("proxyActivationGeneration" in manager_h and "getProxyActivationGeneration" in manager_h and "proxyActivationOrigin" in manager_h and "getProxyActivationOrigin" in manager_h, "native ConnectionsManager must own proxy activation generation and origin", failures)

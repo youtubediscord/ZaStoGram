@@ -503,6 +503,11 @@ public final class ProxyPhasePolicy {
             return "ProxyStatusDroppedAfterAppData";
         }
         if (ProxyEndpointVerdict.FAILURE_CLASS_FAKETLS_NO_SERVER_HELLO.equals(failureClass)) {
+            String normalized = ProxyCheckDiagnostics.normalize(phase);
+            if (ProxyCheckDiagnostics.FAKETLS_SERVER_HELLO_WAIT_TIMEOUT.equals(normalized)
+                    || ProxyCheckDiagnostics.SERVER_CLOSED_AFTER_CLIENT_HELLO.equals(normalized)) {
+                return userTextKeyForPhase(phase);
+            }
             return "ProxyStatusClientHelloNoServerHello";
         }
         if (ProxyEndpointVerdict.FAILURE_CLASS_FAKETLS_BAD_SERVER_FLIGHT.equals(failureClass)) {

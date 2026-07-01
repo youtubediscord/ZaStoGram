@@ -181,7 +181,7 @@ def main() -> None:
     require(
         "shouldKeepFreshFailure" in diagnostics
         and "isWeakRetryLivePhase" in diagnostics
-        and "ProxyCheckDiagnostics.shouldKeepFreshFailure(proxyInfo, event.phase)" in visible_store_text,
+        and "ProxyCheckDiagnostics.shouldKeepFreshFailure(proxyInfo, event.phase, event.activationGeneration)" in visible_store_text,
         "fresh terminal failures must not be overwritten by early retry phases such as admission_queue or host_resolve_start",
     )
     require(
@@ -200,7 +200,7 @@ def main() -> None:
     )
     require(
         ("ProxyPhasePolicy.isProxyUsableSuccessPhase(event.phase)" in reducer_text or "if (verdict.usableSuccess)" in reducer_text)
-        and "ProxyRuntimeStateStore.markConnectionUsable(currentProxy, event.phase, event.timestamp)" in reducer_text,
+        and "ProxyRuntimeStateStore.markConnectionUsable(currentProxy, event.phase, event.timestamp, event.activationGeneration)" in reducer_text,
         "concrete success phases from native must clear stale Java endpoint backoff and fresh terminal failures",
     )
     require(
