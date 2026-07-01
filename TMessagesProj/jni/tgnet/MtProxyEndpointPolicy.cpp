@@ -26,6 +26,7 @@ static constexpr int64_t MT_PROXY_ENDPOINT_HEAVY_NETWORK_COOLDOWN_MAX_MS = 9000;
 static constexpr int64_t MT_PROXY_ENDPOINT_INVALID_SECRET_COOLDOWN_MIN_MS = 15 * 60 * 1000;
 static constexpr int64_t MT_PROXY_ENDPOINT_INVALID_SECRET_COOLDOWN_JITTER_MS = 15 * 60 * 1000;
 static constexpr int64_t MT_PROXY_ENDPOINT_USABLE_SUCCESS_HOLD_MS = 45 * 1000;
+static constexpr int32_t MT_PROXY_ENDPOINT_POST_SUCCESS_DATA_PATH_SHADOWS = 1;
 
 struct MtProxyEndpointResilienceState {
     int64_t lastSuccessTime = 0;
@@ -35,6 +36,7 @@ struct MtProxyEndpointResilienceState {
     int32_t handshakeFailures = 0;
     int32_t plainNoResponseFailures = 0;
     int32_t postHandshakeFailures = 0;
+    int32_t postSuccessDataPathShadowCount = 0;
     bool secretDomainSanitizedLogged = false;
     int32_t activeTcpConnects = 0;
 };
@@ -168,6 +170,12 @@ static bool failureCanBeShadowedBySuccess(const std::string &diagnostic) {
             || diagnostic == MtProxyPhase::PostHandshakeNoAppdata;
 }
 
+static bool failureUsesPostSuccessShadowBudget(const std::string &diagnostic) {
+    return diagnostic == "tcp_connected_no_pong"
+            || diagnostic == "mtproxy_packet_sent_no_response"
+            || diagnostic == MtProxyPhase::PostHandshakeNoAppdata;
+}
+
 static int64_t usableSuccessRemainingMsLocked(const std::string &key, int64_t now) {
     if (key.empty()) {
         return 0;
@@ -181,6 +189,30 @@ static int64_t usableSuccessRemainingMsLocked(const std::string &key, int64_t no
         return 0;
     }
     return MT_PROXY_ENDPOINT_USABLE_SUCCESS_HOLD_MS - elapsed;
+}
+
+static int64_t shadowFailureByFreshDataPathSuccessLocked(const std::string &key, const std::string &phase, int64_t now, bool consumeBudget) {
+    if (key.empty() || !failureCanBeShadowedBySuccess(phase)) {
+        return 0;
+    }
+    auto it = proxyEndpointResilience.find(key);
+    if (it == proxyEndpointResilience.end() || it->second.lastSuccessTime <= 0) {
+        return 0;
+    }
+    int64_t remainingMs = usableSuccessRemainingMsLocked(key, now);
+    if (remainingMs <= 0) {
+        return 0;
+    }
+    if (!failureUsesPostSuccessShadowBudget(phase)) {
+        return remainingMs;
+    }
+    if (it->second.postSuccessDataPathShadowCount >= MT_PROXY_ENDPOINT_POST_SUCCESS_DATA_PATH_SHADOWS) {
+        return 0;
+    }
+    if (consumeBudget) {
+        it->second.postSuccessDataPathShadowCount++;
+    }
+    return remainingMs;
 }
 
 bool MtProxyEndpointPolicy::extractSslipIpv4Address(const std::string &host, struct in_addr *address, std::string *literalAddress) {
@@ -396,7 +428,7 @@ MtProxyEndpointPolicy::FailureResult MtProxyEndpointPolicy::recordFailure(const 
     }
     pthread_mutex_lock(&mtProxyEndpointPolicyMutex);
     if (failureCanBeShadowedBySuccess(phase)) {
-        result.usableSuccessRemainingMs = usableSuccessRemainingMsLocked(result.stateKey, now);
+        result.usableSuccessRemainingMs = shadowFailureByFreshDataPathSuccessLocked(result.stateKey, phase, now, true);
         if (result.usableSuccessRemainingMs > 0) {
             result.shadowedByUsableSuccess = true;
             result.recorded = true;
@@ -421,6 +453,17 @@ int64_t MtProxyEndpointPolicy::freshDataPathSuccessRemainingMs(const MtProxyEndp
     pthread_mutex_lock(&mtProxyEndpointPolicyMutex);
     remainingMs = std::max(remainingMs, usableSuccessRemainingMsLocked(context.networkEndpointKey, now));
     remainingMs = std::max(remainingMs, usableSuccessRemainingMsLocked(context.endpointKey, now));
+    pthread_mutex_unlock(&mtProxyEndpointPolicyMutex);
+    return remainingMs;
+}
+
+int64_t MtProxyEndpointPolicy::shadowFailureByFreshDataPathSuccess(const MtProxyEndpointContext &context, const std::string &phase, int64_t now) {
+    int64_t remainingMs = 0;
+    pthread_mutex_lock(&mtProxyEndpointPolicyMutex);
+    remainingMs = shadowFailureByFreshDataPathSuccessLocked(context.endpointKey, phase, now, true);
+    if (remainingMs <= 0) {
+        remainingMs = shadowFailureByFreshDataPathSuccessLocked(context.networkEndpointKey, phase, now, true);
+    }
     pthread_mutex_unlock(&mtProxyEndpointPolicyMutex);
     return remainingMs;
 }
@@ -486,6 +529,7 @@ void MtProxyEndpointPolicy::resetStateForKey(const std::string &key, int64_t now
     state.cooldownUntil = 0;
     state.hostResolveFailures = 0;
     state.tcpFailures = 0;
+    state.postSuccessDataPathShadowCount = 0;
     if (resetRecipe) {
         state.handshakeFailures = 0;
         state.plainNoResponseFailures = 0;

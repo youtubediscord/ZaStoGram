@@ -1925,6 +1925,8 @@ def print_report(attempts: list[Attempt], global_lines: list[str]) -> None:
     print("- held_by_usable_success: Java control-plane kept the current proxy after fresh app-data success.")
     print("- held_live_by_usable_success: Java control-plane kept proven usable status instead of showing newer sibling live telemetry, including local reconnect start.")
     print("- held_live_by_current_proxy_usable: Java control-plane kept connected current-proxy status instead of showing newer sibling socket telemetry or local reconnect start.")
+    print("- held_by_fresh_failure: Java kept the concrete recent failure visible instead of replacing it with an early retry live phase.")
+    print("- post_success_shadow_budget: one bounded sibling data-path failure after app-data success was forgiven; a repeated data-path failure should break through to backoff/rotation.")
     print("- connected_without_socket_connected_marker: Telegram reached on_connected, but this log slice has no socket_connected marker; do not treat it as a TCP failure.")
     print("- client_hello_sent_no_server_hello: compare VPN vs non-VPN; with VPN failure points to server/client compatibility, without VPN it can be DPI blackhole.")
     print("- tls_alert_after_client_hello: TCP and ClientHello completed; probable TLS alert / non-ServerHello record after ClientHello. Inspect mtproxy_tls_after_client_hello hex/record_len/alert fields before blaming the proxy.")

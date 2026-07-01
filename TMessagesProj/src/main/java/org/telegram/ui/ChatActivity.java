@@ -1243,6 +1243,7 @@ public class ChatActivity extends BaseFragment implements
 
     public final static int OPTION_VIEW_STATISTICS = 115;
     public final static int OPTION_ZASTO_EDIT_HISTORY = 200;
+    public final static int OPTION_SAVE_CLEAN_ROUND_VIDEO = 201;
 
     private final static int[] allowedNotificationsDuringChatListAnimations = new int[]{
             NotificationCenter.messagesRead,
@@ -32974,7 +32975,7 @@ public class ChatActivity extends BaseFragment implements
         return fragment;
     }
 
-    private void saveMessageToGallery(MessageObject messageObject) {
+    private String getMessageSavePath(MessageObject messageObject) {
         String path = messageObject.messageOwner.attachPath;
         if (!TextUtils.isEmpty(path)) {
             File temp = new File(path);
@@ -33000,6 +33001,11 @@ public class ChatActivity extends BaseFragment implements
                 path = f.getPath();
             }
         }
+        return path;
+    }
+
+    private void saveMessageToGallery(MessageObject messageObject) {
+        String path = getMessageSavePath(messageObject);
         if (TextUtils.isEmpty(path)) {
             return;
         }
@@ -33170,6 +33176,24 @@ public class ChatActivity extends BaseFragment implements
                     return;
                 }
                 undoView.showWithAction(0, UndoView.ACTION_MESSAGE_COPIED, null);
+                break;
+            }
+            case OPTION_SAVE_CLEAN_ROUND_VIDEO: {
+                if (Build.VERSION.SDK_INT >= 23 && (Build.VERSION.SDK_INT <= 28 || BuildVars.NO_SCOPED_STORAGE) && getParentActivity().checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                    getParentActivity().requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 4);
+                    selectedObject = null;
+                    selectedObjectGroup = null;
+                    selectedObjectToEditCaption = null;
+                    return;
+                }
+                String path = getMessageSavePath(selectedObject);
+                if (!TextUtils.isEmpty(path)) {
+                    MediaController.saveCleanRoundVideo(path, getParentActivity(), uri -> {
+                        if (getParentActivity() != null && fragmentView != null) {
+                            BulletinFactory.createSaveToGalleryBulletin(this, true, themeDelegate).show();
+                        }
+                    });
+                }
                 break;
             }
             case OPTION_SAVE_TO_GALLERY: {
@@ -45521,6 +45545,11 @@ public class ChatActivity extends BaseFragment implements
                     options.add(OPTION_VIEW_IN_TOPIC);
                     icons.add(R.drawable.msg_viewintopic);
                 }
+                if (!noforwardsOrPaidMedia && selectedObject.isRoundVideo() && !selectedObject.isRoundOnce() && !selectedObject.needDrawBluredPreview()) {
+                    items.add(LocaleController.getString(R.string.SaveCleanRoundVideo));
+                    options.add(OPTION_SAVE_CLEAN_ROUND_VIDEO);
+                    icons.add(R.drawable.msg_gallery);
+                }
                 if (type == 2) {
                     if (chatMode != MODE_SCHEDULED) {
 
@@ -45815,6 +45844,11 @@ public class ChatActivity extends BaseFragment implements
                     items.add(LocaleController.getString(R.string.ViewInTopic));
                     options.add(OPTION_VIEW_IN_TOPIC);
                     icons.add(R.drawable.msg_viewintopic);
+                }
+                if (!noforwardsOrPaidMedia && selectedObject.isRoundVideo() && !selectedObject.isRoundOnce() && !selectedObject.needDrawBluredPreview()) {
+                    items.add(LocaleController.getString(R.string.SaveCleanRoundVideo));
+                    options.add(OPTION_SAVE_CLEAN_ROUND_VIDEO);
+                    icons.add(R.drawable.msg_gallery);
                 }
                 if (type == 4 && !noforwardsOrPaidMedia && !selectedObject.hasRevealedExtendedMedia() && !selectedObject.needDrawBluredPreview()) {
                     if (selectedObject.isVideo()) {

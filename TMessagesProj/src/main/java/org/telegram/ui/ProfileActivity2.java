@@ -476,6 +476,7 @@ public class ProfileActivity2 extends BaseFragment implements
     private static final int ID_BIZ_HOURS = 9;
     private static final int ID_BIZ_LOCATION = 10;
     private static final int ID_NOTE = 11;
+    private static final int ID_PEER_ID = 12;
 
     private boolean isSection(View view) {
         if (view == null) return false;
@@ -492,6 +493,7 @@ public class ProfileActivity2 extends BaseFragment implements
         if (user != null) {
             addPhoneRow(items);
             addUsernameRow(items);
+            addPeerIdRow(items);
             if (userInfo != null) {
                 if (userInfo.birthday != null) {
                     final boolean today = BirthdayController.isToday(userInfo);
@@ -536,6 +538,7 @@ public class ProfileActivity2 extends BaseFragment implements
                     addUsernameRow(items);
                 }
             }
+            addPeerIdRow(items);
             items.add(UItem.asSpace(dp(10)));
         }
 
@@ -614,6 +617,37 @@ public class ProfileActivity2 extends BaseFragment implements
         if (TextUtils.isEmpty(username))
             return;
         items.add(TextDetailCell.Factory.of(ID_USERNAME, text, alsoUsernamesString(username, usernames, value)));
+    }
+
+    private void addPeerIdRow(ArrayList<UItem> items) {
+        final String peerId = getPeerIdText();
+        if (TextUtils.isEmpty(peerId)) {
+            return;
+        }
+        items.add(TextDetailCell.Factory.of(ID_PEER_ID, getPeerIdText(), getString(R.string.PeerId)));
+    }
+
+    private String getPeerIdText() {
+        if (user != null) {
+            return Long.toString(user.id);
+        }
+        if (chat != null) {
+            return Long.toString(chat.id);
+        }
+        if (dialogId != 0) {
+            return Long.toString(Math.abs(dialogId));
+        }
+        return null;
+    }
+
+    private boolean copyPeerId() {
+        final String peerId = getPeerIdText();
+        if (TextUtils.isEmpty(peerId)) {
+            return false;
+        }
+        AndroidUtilities.addToClipboard(peerId);
+        BulletinFactory.of(ProfileActivity2.this).createCopyBulletin(getString(R.string.PeerIdCopied)).show();
+        return true;
     }
 
     private CharSequence alsoUsernamesString(String originalUsername, ArrayList<TLRPC.TL_username> alsoUsernames, CharSequence fallback) {
@@ -716,6 +750,8 @@ public class ProfileActivity2 extends BaseFragment implements
         if (item.id == ID_BIZ_HOURS) {
             hoursExpanded = !hoursExpanded;
             listView.adapter.update(true);
+        } else if (item.id == ID_PEER_ID) {
+            copyPeerId();
         }
     }
 

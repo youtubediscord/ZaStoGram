@@ -50,9 +50,7 @@ final class ProxyVisibleStateStore {
         if (proxyInfo == null || event == null) {
             return false;
         }
-        String phase = ProxyCheckDiagnostics.normalize(event.phase);
-        return ProxyPhasePolicy.isFailure(phase)
-                && ProxyHealthStore.hasFreshUsableSuccess(proxyInfo, event.timestamp);
+        return ProxyHealthStore.shouldShadowFailureByUsableSuccess(proxyInfo, event.phase, event.timestamp);
     }
 
     static String heldByUsablePhase(SharedConfig.ProxyInfo proxyInfo, long now) {
@@ -116,11 +114,21 @@ final class ProxyVisibleStateStore {
         if (proxyInfo == null || event == null) {
             return false;
         }
-        if (ProxyCheckDiagnostics.shouldKeepFreshFailure(proxyInfo, event.phase)) {
-            ProxyRuntimeStateStore.logControl("decision=held_by_fresh_failure source=" + event.source + " account=" + event.account + " phase=" + event.phase + " endpoint=" + event.endpointKey + " held_by=" + ProxyStatusMirror.diagnostic(proxyInfo));
+        if (shouldHoldVisiblePhaseByFreshFailure(proxyInfo, event)) {
             return false;
         }
         ProxyStatusMirror.mirrorVisiblePhase(proxyInfo, event.phase, event.timestamp);
+        return true;
+    }
+
+    static boolean shouldHoldVisiblePhaseByFreshFailure(SharedConfig.ProxyInfo proxyInfo, ProxyConnectionEvent event) {
+        if (proxyInfo == null || event == null) {
+            return false;
+        }
+        if (!ProxyCheckDiagnostics.shouldKeepFreshFailure(proxyInfo, event.phase)) {
+            return false;
+        }
+        ProxyRuntimeStateStore.logControl("decision=held_by_fresh_failure source=" + event.source + " account=" + event.account + " phase=" + event.phase + " endpoint=" + event.endpointKey + " held_by=" + ProxyStatusMirror.diagnostic(proxyInfo));
         return true;
     }
 

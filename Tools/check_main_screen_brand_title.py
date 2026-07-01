@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static guard for the main chat-list brand title."""
+"""Static guard for ZaStoGram app title branding."""
 
 from pathlib import Path
 import sys
@@ -9,6 +9,10 @@ ROOT = Path(__file__).resolve().parents[1]
 DIALOGS_ACTIVITY = ROOT / "TMessagesProj/src/main/java/org/telegram/ui/DialogsActivity.java"
 STRINGS = ROOT / "TMessagesProj/src/main/res/values/strings.xml"
 STRINGS_RU = ROOT / "TMessagesProj/src/main/res/values-ru/strings.xml"
+DEBUG_MANIFESTS = (
+    ROOT / "TMessagesProj/config/debug/AndroidManifest.xml",
+    ROOT / "TMessagesProj/config/debug/AndroidManifest_SDK23.xml",
+)
 
 
 def fail(message: str) -> None:
@@ -44,6 +48,14 @@ def main() -> int:
         fail("DialogsActivity main title must read AppName from local resources, bypassing cloud strings")
     if "new SpannableStringBuilder(getString(R.string.AppName))" in main_title_block:
         fail("DialogsActivity main title must not use LocaleController.getString for AppName")
+
+    for manifest in DEBUG_MANIFESTS:
+        manifest_text = manifest.read_text(encoding="utf-8")
+        manifest_name = manifest.relative_to(ROOT)
+        if 'android:label="@string/AppName"' not in manifest_text:
+            fail(f"{manifest_name} application label must use canonical AppName")
+        if 'android:label="@string/AppNameBeta"' in manifest_text:
+            fail(f"{manifest_name} must not use AppNameBeta for the Android app title")
 
     print("main screen brand title check passed")
     return 0

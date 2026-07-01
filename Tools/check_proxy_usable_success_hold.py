@@ -294,6 +294,7 @@ def main() -> int:
     policy_cpp = read(NATIVE / "MtProxyEndpointPolicy.cpp")
     socket = read(NATIVE / "ConnectionSocket.cpp")
     analyzer = read(ANALYZER)
+    runtime_verifier = read(RUNTIME_LOG_VERIFIER)
     all_checks = read(ROOT / "Tools/check_mtproxy_all.py")
 
     require("public static boolean hasFreshUsableSuccess" in store, "runtime store must expose fresh usable-success state", failures)
@@ -341,6 +342,28 @@ def main() -> int:
         and shadow_decision_idx < visible_write_idx
         and 'return new ProxyRuntimeStateStore.Decision("shadowed_by_usable_success"' in native_stage,
         "fresh usable success must shadow later failure phases before any visible write",
+        failures,
+    )
+    fresh_failure_hold_idx = native_stage.find("ProxyVisibleStateStore.shouldHoldVisiblePhaseByFreshFailure(currentProxy, event)")
+    fresh_failure_decision_idx = native_stage.find('return new ProxyRuntimeStateStore.Decision("held_by_fresh_failure"')
+    require(
+        "static boolean shouldHoldVisiblePhaseByFreshFailure" in visible
+        and fresh_failure_hold_idx >= 0
+        and fresh_failure_decision_idx >= 0
+        and visible_write_idx >= 0
+        and fresh_failure_hold_idx < native_stage.find("ProxyVisibleStateStore.mirrorVisiblePhaseIfAllowed(currentProxy, event)")
+        and fresh_failure_decision_idx < native_stage.find("ProxyVisibleStateStore.mirrorVisiblePhaseIfAllowed(currentProxy, event)"),
+        "fresh failure hold must return held_by_fresh_failure before a retry live phase can become visible_only",
+        failures,
+    )
+    require(
+        "POST_SUCCESS_DATA_PATH_SHADOWS" in health
+        and "postSuccessDataPathShadowCount" in health
+        and "rememberPostSuccessDataPathShadow" in health
+        and "shouldHoldFailureByUsableSuccess" in health
+        and "failureUsesPostSuccessShadowBudget" in health
+        and "ProxyCheckDiagnostics.SHADOWED_SOCKET_FAILURE.equals(normalizedPhase)" in native_stage,
+        "Java usable-success hold must spend a bounded post-success data-path shadow budget, including native shadowed_socket_failure",
         failures,
     )
     require(
@@ -481,15 +504,24 @@ def main() -> int:
     )
 
     require("MT_PROXY_ENDPOINT_USABLE_SUCCESS_HOLD_MS" in policy_cpp, "native endpoint policy must define a usable-success hold window", failures)
+    require(
+        "MT_PROXY_ENDPOINT_POST_SUCCESS_DATA_PATH_SHADOWS" in policy_cpp
+        and "postSuccessDataPathShadowCount" in policy_cpp
+        and "failureUsesPostSuccessShadowBudget" in policy_cpp
+        and "shadowFailureByFreshDataPathSuccess" in policy_h
+        and "shadowFailureByFreshDataPathSuccess" in socket,
+        "native endpoint policy must bound post-success data-path shadowing instead of suppressing unlimited sibling socket failures",
+        failures,
+    )
     require("shadowedByUsableSuccess" in policy_h, "FailureResult must report shadowed usable-success failures", failures)
     require("failureCanBeShadowedBySuccess" in policy_cpp, "native policy must restrict which failures can be shadowed", failures)
     require('"dropped_early_after_appdata"' in policy_cpp and '"dropped_after_appdata"' in policy_cpp, "native policy must explicitly leave post-data drops unshadowed", failures)
     record_failure = method_body(policy_cpp, "MtProxyEndpointPolicy::FailureResult MtProxyEndpointPolicy::recordFailure")
     require(
-        "usableSuccessRemainingMsLocked" in record_failure
+        "shadowFailureByFreshDataPathSuccessLocked" in record_failure
         and "result.shadowedByUsableSuccess = true" in record_failure
         and "return result" in record_failure,
-        "recordFailure must return a shadowed result without increasing cooldown counters",
+        "recordFailure must return a budgeted shadowed result without increasing cooldown counters",
         failures,
     )
     failure_body = method_body(socket, "void ConnectionSocket::recordMtProxyEndpointFailure")
@@ -505,6 +537,7 @@ def main() -> int:
     require("held_by_usable_success" in analyzer, "analyzer must preserve Java usable-success hold decisions", failures)
     require("held_live_by_usable_success" in analyzer, "analyzer must explain Java live-stage holds after usable success", failures)
     require("held_live_by_current_proxy_usable" in analyzer, "analyzer must explain Java live-stage holds while the current proxy is connected", failures)
+    require("POST_SUCCESS_BREAKTHROUGH_FAILURE_PHASES" in runtime_verifier and "has_prior_post_success_shadow" in runtime_verifier, "runtime verifier must allow data-path failures to break a fresh usable hold only after a prior bounded shadow", failures)
     require('"check_proxy_usable_success_hold.py"' in all_checks, "full guard suite must include usable-success hold guard", failures)
 
     run_analyzer_shadow_check(failures)

@@ -1352,6 +1352,7 @@
     <string name="SlideToCancel2">Slide to cancel</string>
     <string name="CancelRound">Cancel</string>
     <string name="SaveToDownloads">Save to downloads</string>
+    <string name="SaveCleanRoundVideo">Save clean circle</string>
     <string name="SaveToGIFs">Save to GIFs</string>
     <string name="SaveToMusic">Save to music</string>
     <string name="ShareFile">Share</string>
@@ -2092,6 +2093,8 @@
     <string name="SharePhoneNumberWith">Share my phone number with %1$s</string>
     <string name="NowInContacts">%1$s is now in your contact list.</string>
     <string name="Info">Info</string>
+    <string name="PeerId">ID</string>
+    <string name="PeerIdCopied">ID copied to clipboard</string>
     <string name="Phone">Phone</string>
     <string name="SharedContent">Shared content</string>
     <string name="SharedLinks">Links</string>

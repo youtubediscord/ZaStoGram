@@ -86,6 +86,12 @@ FRESH_USABLE_FAILURE_OVERWRITE_PHASES = {
     "dropped_after_appdata",
     "connecting_timeout",
 }
+POST_SUCCESS_BREAKTHROUGH_FAILURE_PHASES = {
+    "tcp_connected_no_pong",
+    "mtproxy_packet_sent_no_response",
+    "post_handshake_no_appdata",
+    "dropped_early_after_appdata",
+}
 USABLE_HOLD_DECISIONS = {
     "held_live_by_usable_success",
     "held_live_by_current_proxy_usable",
@@ -228,6 +234,46 @@ def has_prior_connection_marker(lines: list[str], index: int, connection: str, m
         if marker not in candidate:
             continue
         if connection and line_connection(candidate) != connection:
+            continue
+        return True
+    return False
+
+
+def line_is_post_success_shadow(line: str) -> bool:
+    decision = proxy_control_decision(line)
+    phase = line_field(line, "phase")
+    if decision == "post_success_shadow_budget":
+        return True
+    if decision == "shadowed_by_usable_success" and phase in POST_SUCCESS_BREAKTHROUGH_FAILURE_PHASES:
+        return True
+    if "shadowed_socket_failure" in line:
+        return True
+    if "endpoint_failure_shadowed_by_success" in line and phase in POST_SUCCESS_BREAKTHROUGH_FAILURE_PHASES:
+        return True
+    return False
+
+
+def has_prior_post_success_shadow(
+    lines: list[str],
+    current_line: str,
+    endpoint: str,
+    success_time: int | None,
+    current_time: int | None,
+) -> bool:
+    for candidate in lines:
+        if candidate == current_line:
+            break
+        if not line_is_post_success_shadow(candidate):
+            continue
+        candidate_endpoint = line_endpoint(candidate, {})
+        if endpoint and not candidate_endpoint:
+            continue
+        if endpoint and candidate_endpoint and not same_proxy_endpoint(candidate_endpoint, endpoint):
+            continue
+        candidate_time = line_time_ms(candidate)
+        if success_time is not None and candidate_time is not None and candidate_time < success_time:
+            continue
+        if current_time is not None and candidate_time is not None and candidate_time > current_time:
             continue
         return True
     return False
@@ -466,6 +512,8 @@ def verify_rotation_hysteresis(lines: list[str]) -> list[str]:
             if not same_proxy_endpoint(success_endpoint, endpoint):
                 continue
             if success_time is not None and current_time is not None and current_time - success_time > VISIBLE_SUCCESS_HOLD_MS:
+                continue
+            if phase in POST_SUCCESS_BREAKTHROUGH_FAILURE_PHASES and has_prior_post_success_shadow(lines, line, endpoint, success_time, current_time):
                 continue
             failures.append(f"proxy_rotation trigger held by fresh usable success: {line} after {success_line}")
             break
@@ -736,6 +784,8 @@ def verify_stage2_runtime_rules(lines: list[str]) -> list[str]:
             if not same_proxy_endpoint(success_endpoint, endpoint):
                 continue
             if success_time is not None and current_time is not None and current_time - success_time > VISIBLE_SUCCESS_HOLD_MS:
+                continue
+            if phase in POST_SUCCESS_BREAKTHROUGH_FAILURE_PHASES and has_prior_post_success_shadow(lines, line, endpoint, success_time, current_time):
                 continue
             failures.append(f"fresh first_tls_app_recv overwritten by sibling socket failure: {line} after {success_line}")
             break

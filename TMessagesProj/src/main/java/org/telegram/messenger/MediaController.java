@@ -1003,6 +1003,7 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
     public static AlbumEntry allMediaAlbumEntry;
     public static AlbumEntry allPhotosAlbumEntry;
     public static AlbumEntry allVideosAlbumEntry;
+    private static final float ROUND_VIDEO_CLEAN_CROP_RATIO = 0.70f;
     public static ArrayList<AlbumEntry> allMediaAlbums = new ArrayList<>();
     public static ArrayList<AlbumEntry> allPhotoAlbums = new ArrayList<>();
     private static Runnable broadcastPhotosRunnable;
@@ -5511,6 +5512,214 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
             return null;
         }
         return out;
+    }
+
+    public static void saveCleanRoundVideo(String fullPath, Context context, final Utilities.Callback<Uri> onSaved) {
+        if (TextUtils.isEmpty(fullPath) || context == null) {
+            return;
+        }
+        File sourceFile = new File(fullPath);
+        if (!sourceFile.exists() || AndroidUtilities.isInternalUri(Uri.fromFile(sourceFile))) {
+            return;
+        }
+
+        final boolean[] cancelled = new boolean[]{false};
+        final boolean[] finished = new boolean[1];
+        AlertDialog progressDialog = null;
+        try {
+            final AlertDialog dialog = new AlertDialog(context, AlertDialog.ALERT_TYPE_LOADING);
+            dialog.setMessage(LocaleController.getString(R.string.Loading));
+            dialog.setCanceledOnTouchOutside(false);
+            dialog.setCancelable(true);
+            dialog.setOnCancelListener(d -> cancelled[0] = true);
+            AndroidUtilities.runOnUIThread(() -> {
+                if (!finished[0]) {
+                    dialog.show();
+                }
+            }, 250);
+            progressDialog = dialog;
+        } catch (Exception e) {
+            FileLog.e(e);
+        }
+
+        final AlertDialog finalProgress = progressDialog;
+        new Thread(() -> {
+            File cleanFile = null;
+            try {
+                cleanFile = createCleanRoundVideoFile(sourceFile, cancelled, finalProgress);
+                if (cleanFile != null && cleanFile.exists() && !cancelled[0]) {
+                    final File finalCleanFile = cleanFile;
+                    AndroidUtilities.runOnUIThread(() -> saveFile(finalCleanFile.getAbsolutePath(), context, 1, null, "video/mp4", uri -> {
+                        try {
+                            finalCleanFile.delete();
+                        } catch (Exception e) {
+                            FileLog.e(e);
+                        }
+                        if (onSaved != null) {
+                            onSaved.run(uri);
+                        }
+                    }, false));
+                    cleanFile = null;
+                }
+            } catch (Exception e) {
+                FileLog.e(e);
+            } finally {
+                if (cleanFile != null) {
+                    cleanFile.delete();
+                }
+                if (finalProgress != null) {
+                    AndroidUtilities.runOnUIThread(() -> {
+                        try {
+                            if (finalProgress.isShowing()) {
+                                finalProgress.dismiss();
+                            } else {
+                                finished[0] = true;
+                            }
+                        } catch (Exception e) {
+                            FileLog.e(e);
+                        }
+                    });
+                }
+            }
+        }, "CleanRoundVideoSave").start();
+    }
+
+    private static File createCleanRoundVideoFile(File sourceFile, boolean[] cancelled, AlertDialog progressDialog) {
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        try {
+            retriever.setDataSource(sourceFile.getAbsolutePath());
+            int originalWidth = getMetadataInt(retriever, MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH, 0);
+            int originalHeight = getMetadataInt(retriever, MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT, 0);
+            int rotationValue = getMetadataInt(retriever, MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION, 0);
+            int originalBitrate = getMetadataInt(retriever, MediaMetadataRetriever.METADATA_KEY_BITRATE, 0);
+            int framerate = getMetadataFramerate(retriever, 30);
+            long duration = getMetadataLong(retriever, MediaMetadataRetriever.METADATA_KEY_DURATION, 0);
+            if (originalWidth <= 0 || originalHeight <= 0) {
+                return null;
+            }
+            int sourceSide = makeEven(Math.min(originalWidth, originalHeight));
+            int cleanSide = Math.min(sourceSide, makeEven(Math.round(sourceSide * ROUND_VIDEO_CLEAN_CROP_RATIO)));
+            int bitrate = originalBitrate > 0
+                    ? makeVideoBitrate(originalHeight, originalWidth, originalBitrate, cleanSide, cleanSide)
+                    : Math.max(350_000, cleanSide * cleanSide * 4);
+
+            VideoEditedInfo info = new VideoEditedInfo();
+            info.originalPath = sourceFile.getAbsolutePath();
+            info.startTime = -1;
+            info.endTime = -1;
+            info.avatarStartTime = -1;
+            info.originalWidth = originalWidth;
+            info.originalHeight = originalHeight;
+            info.resultWidth = cleanSide;
+            info.resultHeight = cleanSide;
+            info.rotationValue = rotationValue;
+            info.originalBitrate = originalBitrate;
+            info.bitrate = bitrate;
+            info.framerate = framerate;
+            info.originalDuration = duration;
+            info.estimatedDuration = duration;
+            info.volume = 1f;
+
+            CropState cropState = new CropState();
+            cropState.cropPw = cleanSide / (float) originalWidth;
+            cropState.cropPh = cleanSide / (float) originalHeight;
+            cropState.cropScale = 1f;
+            cropState.transformWidth = originalWidth;
+            cropState.transformHeight = originalHeight;
+            cropState.width = cleanSide;
+            cropState.height = cleanSide;
+            cropState.freeform = true;
+            cropState.initied = true;
+            info.cropState = cropState;
+
+            File cleanFile = new File(FileLoader.getDirectory(FileLoader.MEDIA_DIR_CACHE), "clean_round_" + System.currentTimeMillis() + ".mp4");
+            MediaCodecVideoConvertor convertor = new MediaCodecVideoConvertor();
+            VideoConvertorListener callback = new VideoConvertorListener() {
+                @Override
+                public boolean checkConversionCanceled() {
+                    return cancelled != null && cancelled[0];
+                }
+
+                @Override
+                public void didWriteData(long availableSize, float progress) {
+                    if (progressDialog != null) {
+                        AndroidUtilities.runOnUIThread(() -> {
+                            try {
+                                progressDialog.setProgress((int) (progress * 100));
+                            } catch (Exception e) {
+                                FileLog.e(e);
+                            }
+                        });
+                    }
+                }
+            };
+            MediaCodecVideoConvertor.ConvertVideoParams params = MediaCodecVideoConvertor.ConvertVideoParams.of(
+                    sourceFile.getAbsolutePath(), cleanFile, 0,
+                    rotationValue, false,
+                    originalWidth, originalHeight,
+                    cleanSide, cleanSide,
+                    framerate, bitrate, originalBitrate,
+                    -1, -1, -1,
+                    true, duration,
+                    callback,
+                    info
+            );
+            boolean error = convertor.convertVideo(params);
+            if (error || cancelled != null && cancelled[0] || !cleanFile.exists()) {
+                cleanFile.delete();
+                return null;
+            }
+            return cleanFile;
+        } catch (Throwable e) {
+            FileLog.e(e);
+            return null;
+        } finally {
+            try {
+                retriever.release();
+            } catch (Exception e) {
+                FileLog.e(e);
+            }
+        }
+    }
+
+    private static int makeEven(int value) {
+        return Math.max(2, value & ~1);
+    }
+
+    private static int getMetadataInt(MediaMetadataRetriever retriever, int key, int fallback) {
+        try {
+            String value = retriever.extractMetadata(key);
+            if (!TextUtils.isEmpty(value)) {
+                return Integer.parseInt(value);
+            }
+        } catch (Exception e) {
+            FileLog.e(e);
+        }
+        return fallback;
+    }
+
+    private static long getMetadataLong(MediaMetadataRetriever retriever, int key, long fallback) {
+        try {
+            String value = retriever.extractMetadata(key);
+            if (!TextUtils.isEmpty(value)) {
+                return Long.parseLong(value);
+            }
+        } catch (Exception e) {
+            FileLog.e(e);
+        }
+        return fallback;
+    }
+
+    private static int getMetadataFramerate(MediaMetadataRetriever retriever, int fallback) {
+        try {
+            String value = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE);
+            if (!TextUtils.isEmpty(value)) {
+                return Math.max(1, Math.round(Float.parseFloat(value)));
+            }
+        } catch (Exception e) {
+            FileLog.e(e);
+        }
+        return fallback;
     }
 
     public static void saveFile(String fullPath, Context context, final int type, final String name, final String mime) {

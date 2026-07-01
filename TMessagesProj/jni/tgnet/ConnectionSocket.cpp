@@ -4250,7 +4250,7 @@ void ConnectionSocket::closeSocket(int32_t reason, int32_t error) {
             context.networkEndpointKey = "";
             context.fakeTls = currentSecretIsFakeTls;
             int64_t now = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis();
-            shadowedSocketFailureHoldMs = MtProxyEndpointPolicy::freshDataPathSuccessRemainingMs(context, now);
+            shadowedSocketFailureHoldMs = MtProxyEndpointPolicy::shadowFailureByFreshDataPathSuccess(context, terminalDiagnostic, now);
             if (shadowedSocketFailureHoldMs > 0) {
                 suppressProxyCloseDiagnostic = true;
                 shadowedSocketFailure = true;

@@ -15,6 +15,7 @@ final class ProxyHealthStore {
     private static final long ROTATED_AWAY_HOLD_MS = 45 * 1000L;
     private static final long PUNITIVE_FAILURE_WINDOW_MS = 30 * 1000L;
     private static final int PUNITIVE_FAILURES_TO_ROTATE = 2;
+    private static final int POST_SUCCESS_DATA_PATH_SHADOWS = 1;
 
     private static final HashMap<String, EndpointState> endpointStates = new HashMap<>();
     private static final HashMap<String, Long> endpointTelemetryIgnoreUntil = new HashMap<>();
@@ -92,6 +93,56 @@ final class ProxyHealthStore {
             return state.lastUsablePhase;
         }
         return ProxyCheckDiagnostics.UNKNOWN_FAIL;
+    }
+
+    static boolean shouldShadowFailureByUsableSuccess(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now) {
+        String normalized = ProxyCheckDiagnostics.normalize(diagnostic);
+        if (!ProxyPhasePolicy.isFailure(normalized)
+                || !hasFreshUsableSuccess(proxyInfo, now)
+                || failureNeverShadowedByUsableSuccess(normalized)) {
+            return false;
+        }
+        if (!failureUsesPostSuccessShadowBudget(normalized)) {
+            return true;
+        }
+        EndpointState state = endpointStateForUsableHold(proxyInfo, normalized, now);
+        if (state == null || state.postSuccessDataPathShadowCount >= POST_SUCCESS_DATA_PATH_SHADOWS) {
+            return false;
+        }
+        state.postSuccessDataPathShadowCount++;
+        logControl("decision=post_success_shadow_budget phase=" + normalized + " endpoint=" + ProxyEndpointKey.endpoint(proxyInfo) + " used=" + state.postSuccessDataPathShadowCount + " limit=" + POST_SUCCESS_DATA_PATH_SHADOWS);
+        return true;
+    }
+
+    static boolean shouldHoldFailureByUsableSuccess(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now) {
+        String normalized = ProxyCheckDiagnostics.normalize(diagnostic);
+        if (!ProxyPhasePolicy.isFailure(normalized)
+                || !hasFreshUsableSuccess(proxyInfo, now)
+                || failureNeverShadowedByUsableSuccess(normalized)) {
+            return false;
+        }
+        if (!failureUsesPostSuccessShadowBudget(normalized)) {
+            return true;
+        }
+        EndpointState state = endpointStateForUsableHold(proxyInfo, normalized, now);
+        return state != null && state.postSuccessDataPathShadowCount < POST_SUCCESS_DATA_PATH_SHADOWS;
+    }
+
+    static boolean rememberPostSuccessDataPathShadow(SharedConfig.ProxyInfo proxyInfo, long now) {
+        if (!hasFreshUsableSuccess(proxyInfo, now)) {
+            return false;
+        }
+        String exactKey = ProxyEndpointKey.exact(proxyInfo);
+        if (exactKey == null) {
+            return false;
+        }
+        EndpointState state = endpointStateForKey(exactKey);
+        if (state.postSuccessDataPathShadowCount >= POST_SUCCESS_DATA_PATH_SHADOWS) {
+            return false;
+        }
+        state.postSuccessDataPathShadowCount++;
+        logControl("decision=post_success_shadow_budget phase=" + ProxyCheckDiagnostics.SHADOWED_SOCKET_FAILURE + " endpoint=" + ProxyEndpointKey.endpoint(proxyInfo) + " used=" + state.postSuccessDataPathShadowCount + " limit=" + POST_SUCCESS_DATA_PATH_SHADOWS);
+        return true;
     }
 
     static long lastUsableSuccessAgeMs(SharedConfig.ProxyInfo proxyInfo, long now) {
@@ -259,6 +310,41 @@ final class ProxyHealthStore {
         return state == null ? 0 : state.lastUsableSuccessTime;
     }
 
+    private static EndpointState endpointStateForUsableHold(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now) {
+        if (proxyInfo == null) {
+            return null;
+        }
+        String key = ProxyEndpointKey.forPhase(proxyInfo, diagnostic);
+        if (key == null) {
+            key = ProxyEndpointKey.exact(proxyInfo);
+        }
+        if (key == null) {
+            return null;
+        }
+        EndpointState state = endpointStateForKey(key);
+        if (state.usableSuccessUntil <= now) {
+            long remainingMs = usableSuccessRemainingMs(proxyInfo, now);
+            if (remainingMs <= 0) {
+                return null;
+            }
+            state.usableSuccessUntil = now + remainingMs;
+        }
+        return state;
+    }
+
+    private static boolean failureUsesPostSuccessShadowBudget(String diagnostic) {
+        String normalized = ProxyCheckDiagnostics.normalize(diagnostic);
+        return ProxyCheckDiagnostics.TCP_CONNECTED_NO_PONG.equals(normalized)
+                || ProxyCheckDiagnostics.MTPROXY_PACKET_SENT_NO_RESPONSE.equals(normalized)
+                || ProxyCheckDiagnostics.POST_HANDSHAKE_NO_APPDATA.equals(normalized);
+    }
+
+    private static boolean failureNeverShadowedByUsableSuccess(String diagnostic) {
+        String normalized = ProxyCheckDiagnostics.normalize(diagnostic);
+        return ProxyCheckDiagnostics.DROPPED_EARLY_AFTER_APPDATA.equals(normalized)
+                || ProxyCheckDiagnostics.DROPPED_AFTER_APPDATA.equals(normalized);
+    }
+
     private static EndpointState freshestUsableState(EndpointState first, EndpointState second, long now) {
         boolean firstFresh = first != null
                 && first.usableSuccessUntil > now
@@ -284,6 +370,7 @@ final class ProxyHealthStore {
         state.lastCheckTime = now;
         state.nextCheckTime = now + PROXY_CHECK_CONNECTED_GRACE_MS;
         state.usableSuccessUntil = usableSuccess ? now + USABLE_SUCCESS_HOLD_MS : 0;
+        state.postSuccessDataPathShadowCount = 0;
         state.rotatedAwayUntil = 0;
         if (usableSuccess) {
             state.lastUsableSuccessTime = now;
@@ -293,6 +380,7 @@ final class ProxyHealthStore {
 
     private static EndpointFailureResult rememberEndpointFailure(EndpointState state, SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now, String source) {
         state.usableSuccessUntil = 0;
+        state.postSuccessDataPathShadowCount = 0;
         state.lifecycle = EndpointLifecycle.DEGRADED;
         state.lastDiagnostic = ProxyCheckDiagnostics.normalize(diagnostic);
         state.lastCheckTime = now;
@@ -437,5 +525,6 @@ final class ProxyHealthStore {
         long usableSuccessUntil;
         long lastUsableSuccessTime;
         long rotatedAwayUntil;
+        int postSuccessDataPathShadowCount;
     }
 }

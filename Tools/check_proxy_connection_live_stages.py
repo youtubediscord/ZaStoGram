@@ -167,8 +167,15 @@ def main() -> None:
     reducer_text = text("reducer")
     visible_store_text = text("visible_store")
     require(
-        "ProxyPhasePolicy.isFailure(event.phase)" in reducer_text
-        and "!ProxyCheckDiagnostics.UNKNOWN_FAIL.equals(event.phase)" in reducer_text,
+        (
+            "ProxyPhasePolicy.isFailure(event.phase)" in reducer_text
+            and "!ProxyCheckDiagnostics.UNKNOWN_FAIL.equals(event.phase)" in reducer_text
+        )
+        or (
+            "String normalizedPhase = ProxyCheckDiagnostics.normalize(event.phase)" in reducer_text
+            and "ProxyPhasePolicy.isFailure(normalizedPhase)" in reducer_text
+            and "!ProxyCheckDiagnostics.UNKNOWN_FAIL.equals(normalizedPhase)" in reducer_text
+        ),
         "current proxy stage callback must accept concrete failure phases while rejecting unknown_fail noise",
     )
     require(

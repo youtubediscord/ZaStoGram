@@ -2,11 +2,14 @@
 <resources>
     <string name="AppName">ZaStoGram</string>
     <string name="AppNameBeta">Telegram Beta</string>
+    <string name="PeerId">ID</string>
+    <string name="PeerIdCopied">ID скопирован в буфер обмена</string>
     <string name="LanguageName">Русский</string>
     <string name="English">Английский</string>
     <string name="LanguageNameInEnglish">Russian</string>
     <string name="LanguageCode">ru</string>
     <string name="ContinueOnThisLanguage">Продолжить на русском</string>
+    <string name="SaveCleanRoundVideo">Сохранить кружочек без подписи</string>
     <!--signin view-->
     <string name="YourPhone">Ваш телефон</string>
     <string name="StartText">Проверьте код страны и введите свой номер телефона.</string>

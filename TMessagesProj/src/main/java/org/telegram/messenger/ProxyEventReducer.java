@@ -12,8 +12,20 @@ final class ProxyEventReducer {
             return ProxyRuntimeStateStore.Decision.ignored("ignored_empty_event", ProxyCheckDiagnostics.UNKNOWN_FAIL, "");
         }
         SharedConfig.ProxyInfo currentProxy = SharedConfig.currentProxy;
-        boolean concretePhase = ProxyPhasePolicy.isLivePhase(event.phase)
-                || (ProxyPhasePolicy.isFailure(event.phase) && !ProxyCheckDiagnostics.UNKNOWN_FAIL.equals(event.phase));
+        String normalizedPhase = ProxyCheckDiagnostics.normalize(event.phase);
+        if (ProxyCheckDiagnostics.SHADOWED_SOCKET_FAILURE.equals(normalizedPhase)) {
+            if (isActiveProxyEvent(event)
+                    && currentProxy != null
+                    && ProxyEndpointKey.matchesLiveStage(currentProxy, event.endpointKey)) {
+                ProxyHealthStore.rememberPostSuccessDataPathShadow(currentProxy, event.timestamp);
+                String originName = event.origin == null ? ProxyConnectionEvent.Origin.ACTIVE_PROXY.wireName : event.origin.wireName;
+                ProxyRuntimeStateStore.logControl("decision=telemetry_only source=" + event.source + " origin=" + originName + " account=" + event.account + " phase=" + normalizedPhase + " endpoint=" + event.endpointKey);
+                return ProxyRuntimeStateStore.Decision.ignored("shadowed_socket_failure", normalizedPhase, event.endpointKey);
+            }
+            return ProxyRuntimeStateStore.Decision.ignored("shadowed_socket_failure", normalizedPhase, event.endpointKey);
+        }
+        boolean concretePhase = ProxyPhasePolicy.isLivePhase(normalizedPhase)
+                || (ProxyPhasePolicy.isFailure(normalizedPhase) && !ProxyCheckDiagnostics.UNKNOWN_FAIL.equals(normalizedPhase));
         boolean selectedAccountStage = event.account == UserConfig.selectedAccount;
         boolean terminalExactConfig = ProxyPhasePolicy.terminalExactConfig(event.phase);
         String evidence = ProxyPhasePolicy.evidenceForPhase(event.phase);
@@ -64,12 +76,13 @@ final class ProxyEventReducer {
             ProxyRuntimeStateStore.logControl("decision=held_live_by_current_proxy_usable source=" + event.source + " origin=" + event.origin.wireName + " account=" + event.account + " phase=" + event.phase + " endpoint=" + event.endpointKey + " held_by=" + heldBy);
             return new ProxyRuntimeStateStore.Decision("held_live_by_current_proxy_usable", event.phase, event.endpointKey, false, false, true);
         }
-        if (ProxyPhasePolicy.canBackoff(event.phase) && freshUsableSuccess) {
+        boolean holdFailureByUsableSuccess = ProxyHealthStore.shouldHoldFailureByUsableSuccess(currentProxy, event.phase, event.timestamp);
+        if (ProxyPhasePolicy.canBackoff(event.phase) && freshUsableSuccess && holdFailureByUsableSuccess) {
             String heldBy = ProxyVisibleStateStore.heldByUsablePhase(currentProxy, event.timestamp);
             ProxyRuntimeStateStore.logControl("decision=held_by_usable_success source=" + event.source + " origin=" + event.origin.wireName + " account=" + event.account + " phase=" + event.phase + " endpoint=" + event.endpointKey + " held_by=" + heldBy);
             return new ProxyRuntimeStateStore.Decision("held_by_usable_success", event.phase, event.endpointKey, false, false, true);
         }
-        if (ProxyPhasePolicy.canBackoff(event.phase) && ProxyVisibleStateStore.isCurrentProxyUsable(currentProxy, event.timestamp)) {
+        if (ProxyPhasePolicy.canBackoff(event.phase) && ProxyVisibleStateStore.isCurrentProxyUsable(currentProxy, event.timestamp) && holdFailureByUsableSuccess) {
             String heldBy = ProxyVisibleStateStore.heldByCurrentProxyPhase(currentProxy, event.timestamp);
             ProxyRuntimeStateStore.logControl("decision=held_by_current_proxy_usable source=" + event.source + " origin=" + event.origin.wireName + " account=" + event.account + " phase=" + event.phase + " endpoint=" + event.endpointKey + " held_by=" + heldBy);
             return new ProxyRuntimeStateStore.Decision("held_by_current_proxy_usable", event.phase, event.endpointKey, false, false, true);
@@ -99,6 +112,9 @@ final class ProxyEventReducer {
 
         boolean visibleChanged = false;
         if (selectedAccountStage && ProxyPhasePolicy.canOverwriteVisible(event.phase)) {
+            if (ProxyVisibleStateStore.shouldHoldVisiblePhaseByFreshFailure(currentProxy, event)) {
+                return new ProxyRuntimeStateStore.Decision("held_by_fresh_failure", event.phase, event.endpointKey, false, false, true);
+            }
             visibleChanged = ProxyVisibleStateStore.mirrorVisiblePhaseIfAllowed(currentProxy, event);
         }
 
