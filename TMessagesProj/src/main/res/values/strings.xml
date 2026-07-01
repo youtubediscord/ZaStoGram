@@ -192,6 +192,7 @@
     <string name="ProxyStatusDnsCoalesceWait">Waiting for proxy DNS result...</string>
     <string name="ProxyStatusDnsCacheHit">Using saved proxy IP...</string>
     <string name="ProxyStatusDnsCacheStore">Saved proxy IP...</string>
+    <string name="ProxyStatusMtproxyProbeWait">Checking MTProxy/FakeTLS profile...</string>
     <string name="ProxyStatusPhaseAdaptiveRecipe">Adjusting proxy startup recipe...</string>
     <string name="ProxyStatusSecretDomainSanitized">Using sanitized proxy SNI...</string>
     <string name="ProxyStatusHostResolve">Resolving proxy host...</string>
@@ -214,6 +215,7 @@
     <string name="ProxyStatusConnectingTimeout">Proxy connection timed out</string>
     <string name="ProxyStatusAdmissionTimeout">Proxy connection slot timed out before TCP started</string>
     <string name="ProxyStatusEndpointCooldownTimeout">Proxy cooldown timed out before TCP started</string>
+    <string name="ProxyStatusMtproxyProbeWaitTimeout">MTProxy/FakeTLS profile check did not finish</string>
     <string name="ProxyStatusDnsCoalesceTimeout">Proxy DNS wait timed out before DNS lookup started</string>
     <string name="ProxyStatusDnsNegativeCacheHit">Proxy DNS failure is cached briefly</string>
     <string name="ProxyStatusDnsBlockedZeroAddress">Proxy DNS returned blocked address 0.0.0.0</string>
@@ -221,15 +223,20 @@
     <string name="ProxyStatusHostResolveTimeout">Proxy DNS lookup timed out</string>
     <string name="ProxyStatusTcpConnectGateTimeout">Timed out before proxy TCP start</string>
     <string name="ProxyStatusTcpNotConnected">TCP did not connect: server or port is unreachable</string>
+    <string name="ProxyStatusTcpConnectionRefused">TCP was refused: server or port rejected the connection</string>
+    <string name="ProxyStatusTcpConnectTimeout">TCP timed out: server is unreachable or blocked before handshake</string>
     <string name="ProxyStatusTcpConnectedNoPong">TCP connected, but MTProxy did not answer</string>
     <string name="ProxyStatusNetworkBlockSuspected">Looks like network filtering before MTProxy reply</string>
     <string name="ProxyStatusSecretInvalidDomainControlChar">Proxy secret contains an invalid domain character</string>
     <string name="ProxyStatusSecretInvalidDomain">Proxy secret contains an invalid domain</string>
     <string name="ProxyStatusClientHelloNoServerHello">ClientHello sent, ServerHello did not arrive</string>
+    <string name="ProxyStatusFaketlsServerHelloWaitTimeout">FakeTLS ServerHello wait timed out</string>
+    <string name="ProxyStatusServerClosedAfterClientHello">Server closed after ClientHello</string>
     <string name="ProxyStatusTlsAlertAfterClientHello">Probable TLS alert after ClientHello</string>
     <string name="ProxyStatusShortTlsResponseAfterClientHello">Server sent a short TLS response after ClientHello</string>
     <string name="ProxyStatusUnrecognizedTlsResponseAfterClientHello">Server sent an unsupported TLS response after ClientHello</string>
     <string name="ProxyStatusServerHelloHmacMismatch">ServerHello failed MTProxy HMAC check</string>
+    <string name="ProxyStatusBackgroundHandshakeAborted">Handshake stopped while app was in background</string>
     <string name="ProxyStatusHandshakeProfilesExhausted">MTProxy handshake profiles exhausted; retrying with backoff</string>
     <string name="ProxyStatusMtproxyPacketSentNoResponse">MTProxy packet sent, no server response</string>
     <string name="ProxyStatusPostHandshakeNoAppData">Handshake passed, no MTProto data arrived</string>
@@ -1353,6 +1360,8 @@
     <string name="CancelRound">Cancel</string>
     <string name="SaveToDownloads">Save to downloads</string>
     <string name="SaveCleanRoundVideo">Save clean circle</string>
+    <string name="RoundVideosAsRegularMedia">Open circles as videos</string>
+    <string name="RoundVideosAsRegularMediaInfo">Shows round video messages as regular square media in chats.</string>
     <string name="SaveToGIFs">Save to GIFs</string>
     <string name="SaveToMusic">Save to music</string>
     <string name="ShareFile">Share</string>
@@ -11052,7 +11061,7 @@
     <string name="WssTransportOff">Off</string>
     <string name="WssTransportOfficial">Official</string>
     <string name="WssTransportCustom">Custom</string>
-    <string name="WssTransportInfo">WSS is a separate Telegram transport. Official mode uses Telegram WebSocket relays and does not require a VPS. Custom mode requires your own WebSocket gateway.</string>
+    <string name="WssTransportInfo">WSS is a separate Telegram transport. Official mode uses Telegram WebSocket relays for DC2/DC4 and does not require a VPS. Custom mode requires your own WebSocket gateway.</string>
     <string name="UseProxyWss">WSS gateway</string>
     <string name="UseProxyWssHost">WSS host</string>
     <string name="UseProxyWssPath">WSS path</string>

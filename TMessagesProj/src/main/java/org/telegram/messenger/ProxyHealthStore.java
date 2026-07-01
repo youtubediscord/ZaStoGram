@@ -264,6 +264,21 @@ final class ProxyHealthStore {
         logControl("decision=clear_backoff phase=" + phase + " endpoint=" + ProxyEndpointKey.endpoint(proxyInfo));
     }
 
+    static void clearUsableSuccessHold(SharedConfig.ProxyInfo proxyInfo, long now, String reason) {
+        String exactKey = ProxyEndpointKey.exact(proxyInfo);
+        if (exactKey == null) {
+            return;
+        }
+        clearUsableSuccessHoldForKey(exactKey);
+        String networkKey = ProxyEndpointKey.network(proxyInfo);
+        if (networkKey != null && !networkKey.equals(exactKey)) {
+            clearUsableSuccessHoldForKey(networkKey);
+        }
+        clearEndpointTelemetryIgnore(ProxyEndpointKey.liveStage(proxyInfo));
+        clearEndpointTelemetryIgnore(ProxyEndpointKey.networkLiveStage(proxyInfo));
+        logControl("decision=clear_usable_success_hold endpoint=" + ProxyEndpointKey.endpoint(proxyInfo) + " reason=" + (reason == null ? "unknown" : reason));
+    }
+
     static EndpointFailureResult rememberProxyCheckFailure(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now) {
         String normalized = ProxyCheckDiagnostics.normalize(diagnostic);
         String key = ProxyEndpointKey.forPhase(proxyInfo, normalized);
@@ -330,6 +345,32 @@ final class ProxyHealthStore {
             state.usableSuccessUntil = now + remainingMs;
         }
         return state;
+    }
+
+    private static void clearUsableSuccessHoldForKey(String key) {
+        EndpointState state = endpointStates.get(key);
+        if (state == null) {
+            return;
+        }
+        state.usableSuccessUntil = 0;
+        state.postSuccessDataPathShadowCount = 0;
+        state.rotatedAwayUntil = 0;
+        if (state.lifecycle == EndpointLifecycle.ROTATED_AWAY || state.lifecycle == EndpointLifecycle.QUARANTINED) {
+            state.lifecycle = EndpointLifecycle.TESTING;
+        }
+    }
+
+    private static void clearEndpointTelemetryIgnore(String endpointKey) {
+        if (endpointKey == null || endpointKey.length() == 0) {
+            return;
+        }
+        java.util.Iterator<String> iterator = endpointTelemetryIgnoreUntil.keySet().iterator();
+        while (iterator.hasNext()) {
+            String ignoredKey = iterator.next();
+            if (ProxyEndpointKey.sameTelemetryEndpointKey(endpointKey, ignoredKey)) {
+                iterator.remove();
+            }
+        }
     }
 
     private static boolean failureUsesPostSuccessShadowBudget(String diagnostic) {
@@ -407,8 +448,8 @@ final class ProxyHealthStore {
         if (rotationAllowed) {
             state.lifecycle = EndpointLifecycle.QUARANTINED;
         }
-        String evidence = ProxyPhasePolicy.evidenceForPhase(state.lastDiagnostic);
-        logControl("decision=backoff phase=" + state.lastDiagnostic + " evidence=" + evidence + " endpoint=" + ProxyEndpointKey.endpoint(proxyInfo) + " wait_ms=" + backoff + " failures=" + state.consecutiveFailures + " rotation_failures=" + state.rotationFailures + " rotation_allowed=" + rotationAllowed + " source=" + source);
+        String failureClass = ProxyPhasePolicy.failureClassForPhase(state.lastDiagnostic);
+        logControl("decision=backoff phase=" + state.lastDiagnostic + " failure_class=" + failureClass + " endpoint=" + ProxyEndpointKey.endpoint(proxyInfo) + " wait_ms=" + backoff + " failures=" + state.consecutiveFailures + " rotation_failures=" + state.rotationFailures + " rotation_allowed=" + rotationAllowed + " source=" + source);
         return new EndpointFailureResult(state.lastDiagnostic, state.consecutiveFailures, state.rotationFailures, rotationAllowed, true);
     }
 

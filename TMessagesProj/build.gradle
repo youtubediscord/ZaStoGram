@@ -96,6 +96,12 @@ dependencies {
 }
 
 def isWindows = String.valueOf(DefaultNativePlatform.currentOperatingSystem.toFamilyName() == OperatingSystemFamily.WINDOWS)
+def zastoAllNativeAbis = ["armeabi-v7a", "arm64-v8a", "x86", "x86_64"]
+def zastoRequestedAbiFilter = (project.findProperty("zastoAbiFilter") ?: System.getenv("ZASTO_ABI_FILTER"))?.toString()?.trim()
+if (zastoRequestedAbiFilter && !zastoAllNativeAbis.contains(zastoRequestedAbiFilter)) {
+    throw new GradleException("Unsupported zastoAbiFilter '${zastoRequestedAbiFilter}'. Expected one of: ${zastoAllNativeAbis.join(', ')}")
+}
+
 android {
     compileSdkVersion 35
     buildToolsVersion '35.0.0'
@@ -131,11 +137,11 @@ android {
 
         multiDexEnabled true
 
-        // ZaStoGram: Chaquopy (applied to this library module) requires ndk.abiFilters to know
-        // which ABIs to bundle CPython for. App flavors still narrow each APK to its own ABI;
-        // 'afat' (the CI authority) uses all four anyway.
+        // ZaStoGram: CI matrix jobs pass one ABI so the library module does not rebuild
+        // all native outputs before packaging a single-ABI APK. Without the property, keep
+        // the universal fallback for local builds and afat.
         ndk {
-            abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
+            abiFilters(*(zastoRequestedAbiFilter ? [zastoRequestedAbiFilter] : zastoAllNativeAbis))
         }
 
         externalNativeBuild {

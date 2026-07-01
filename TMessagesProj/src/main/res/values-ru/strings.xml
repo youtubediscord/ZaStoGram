@@ -10,6 +10,8 @@
     <string name="LanguageCode">ru</string>
     <string name="ContinueOnThisLanguage">Продолжить на русском</string>
     <string name="SaveCleanRoundVideo">Сохранить кружочек без подписи</string>
+    <string name="RoundVideosAsRegularMedia">Открывать кружочки как видео</string>
+    <string name="RoundVideosAsRegularMediaInfo">Показывает видеосообщения обычными квадратными медиа внутри чата.</string>
     <!--signin view-->
     <string name="YourPhone">Ваш телефон</string>
     <string name="StartText">Проверьте код страны и введите свой номер телефона.</string>
@@ -279,6 +281,7 @@
     <string name="ProxyStatusDnsCoalesceWait">Ждём результат DNS прокси...</string>
     <string name="ProxyStatusDnsCacheHit">Используем сохранённый IP прокси...</string>
     <string name="ProxyStatusDnsCacheStore">IP прокси сохранён...</string>
+    <string name="ProxyStatusMtproxyProbeWait">Проверяем профиль MTProxy/FakeTLS...</string>
     <string name="ProxyStatusPhaseAdaptiveRecipe">Меняем рецепт запуска прокси...</string>
     <string name="ProxyStatusSecretDomainSanitized">Используем очищенный SNI прокси...</string>
     <string name="ProxyStatusHostResolve">Ищем адрес прокси...</string>
@@ -301,6 +304,7 @@
     <string name="ProxyStatusConnectingTimeout">Подключение к прокси не успело завершиться</string>
     <string name="ProxyStatusAdmissionTimeout">Слот подключения к прокси не дождался запуска TCP</string>
     <string name="ProxyStatusEndpointCooldownTimeout">Пауза прокси истекла до запуска TCP</string>
+    <string name="ProxyStatusMtproxyProbeWaitTimeout">Проверка профиля MTProxy/FakeTLS не завершилась</string>
     <string name="ProxyStatusDnsCoalesceTimeout">Ожидание DNS-слота истекло до запуска DNS</string>
     <string name="ProxyStatusDnsNegativeCacheHit">DNS-ошибка прокси кратко закэширована</string>
     <string name="ProxyStatusDnsBlockedZeroAddress">DNS прокси вернул заблокированный адрес 0.0.0.0</string>
@@ -308,15 +312,20 @@
     <string name="ProxyStatusHostResolveTimeout">DNS-запрос прокси не ответил вовремя</string>
     <string name="ProxyStatusTcpConnectGateTimeout">Не дождались запуска TCP-подключения к прокси</string>
     <string name="ProxyStatusTcpNotConnected">TCP не открылся: сервер или порт недоступен</string>
+    <string name="ProxyStatusTcpConnectionRefused">TCP отклонён: сервер или порт не принимает соединение</string>
+    <string name="ProxyStatusTcpConnectTimeout">TCP не ответил: сервер недоступен или блокировка до рукопожатия</string>
     <string name="ProxyStatusTcpConnectedNoPong">TCP открылся, но MTProxy не ответил</string>
     <string name="ProxyStatusNetworkBlockSuspected">Похоже на сетевую блокировку до ответа MTProxy</string>
     <string name="ProxyStatusSecretInvalidDomainControlChar">В секрете прокси есть недопустимый символ домена</string>
     <string name="ProxyStatusSecretInvalidDomain">В секрете прокси указан недопустимый домен</string>
     <string name="ProxyStatusClientHelloNoServerHello">ClientHello отправлен, ServerHello не пришёл</string>
+    <string name="ProxyStatusFaketlsServerHelloWaitTimeout">Ожидание FakeTLS ServerHello истекло</string>
+    <string name="ProxyStatusServerClosedAfterClientHello">Сервер закрыл соединение после ClientHello</string>
     <string name="ProxyStatusTlsAlertAfterClientHello">Вероятный TLS alert после ClientHello</string>
     <string name="ProxyStatusShortTlsResponseAfterClientHello">Сервер прислал короткий TLS-ответ после ClientHello</string>
     <string name="ProxyStatusUnrecognizedTlsResponseAfterClientHello">Сервер прислал неподдерживаемый TLS-ответ после ClientHello</string>
     <string name="ProxyStatusServerHelloHmacMismatch">ServerHello не прошёл HMAC-проверку MTProxy</string>
+    <string name="ProxyStatusBackgroundHandshakeAborted">Рукопожатие остановилось в фоне</string>
     <string name="ProxyStatusHandshakeProfilesExhausted">Профили MTProxy handshake исчерпаны; повторяем с задержкой</string>
     <string name="ProxyStatusMtproxyPacketSentNoResponse">MTProxy-пакет отправлен, ответа сервера нет</string>
     <string name="ProxyStatusPostHandshakeNoAppData">Рукопожатие прошло, MTProto-данные не пришли</string>
@@ -371,12 +380,12 @@
     <string name="WssTransportOff">Выкл</string>
     <string name="WssTransportOfficial">Официальный</string>
     <string name="WssTransportCustom">Свой</string>
-    <string name="WssTransportInfo">WSS — отдельный транспорт Telegram. Официальный режим использует WebSocket-релеи Telegram и не требует VPS. Свой режим требует собственного WebSocket-шлюза.</string>
+    <string name="WssTransportInfo">WSS — отдельный транспорт Telegram. Официальный режим использует WebSocket-релеи Telegram для DC2/DC4 и не требует VPS. Свой режим требует собственного WebSocket-шлюза.</string>
     <string name="UseProxyWss">WSS шлюз</string>
     <string name="UseProxyWssHost">WSS хост</string>
     <string name="UseProxyWssPath">WSS путь</string>
     <string name="UseProxyWssMiniApps">Mini Apps через выбранный SOCKS</string>
-    <string name="UseProxyWssInfo">Свой WSS — это не MTProxy и не SOCKS-прокси. Когда WSS включен, выбранный SOCKS5 может использоваться как upstream для WSS.</string>
+    <string name="UseProxyWssInfo">Свой WSS — это не MTProxy и не SOCKS-прокси. Когда WSS включён, выбранный SOCKS5 может использоваться как upstream для WSS.</string>
     <string name="WssSocksUpstreamHeader">SOCKS5 upstream для WSS</string>
     <string name="WssSocksUpstreamInfo">Здесь показываются только SOCKS5. Выбранный SOCKS5 используется как upstream для WSS; MTProxy скрыты.</string>
     <!-- ZaStoGram — экран логов -->

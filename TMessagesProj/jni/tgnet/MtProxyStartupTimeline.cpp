@@ -69,7 +69,7 @@ MtProxyStartupTimeoutDecision MtProxyStartupTimeline::timeoutDecision(int64_t no
     decision.phase = phase_;
     if (tcpConnectAttemptStarted_ && !socketConnectedLogged) {
         decision.active = true;
-        decision.diagnostic = "tcp_not_connected";
+        decision.diagnostic = "tcp_connect_timeout";
         decision.event = "tcp_connect_timeout";
         decision.startMs = tcpConnectStartTimeMs_;
         decision.deadlineMs = tcpConnectDeadlineMs_;
@@ -256,7 +256,7 @@ const char *MtProxyStartupTimeline::timeoutDiagnosticForPhase(MtProxyStartupPhas
         case MtProxyStartupPhase::HostResolve:
             return "host_resolve_timeout";
         case MtProxyStartupPhase::TcpConnect:
-            return "tcp_not_connected";
+            return "tcp_connect_timeout";
         case MtProxyStartupPhase::None:
             return "connection_not_started";
     }

@@ -174,10 +174,14 @@ python3 Tools/check_build_apk_workflow.py
 ### Отдельный WSS-транспорт
 
 WSS — это не MTProxy FakeTLS и не Python/локальный relay. В форке он вынесен в
-нативный путь `WssTransport.cpp` и управляется отдельным состоянием:
+нативный путь `WssTransport.cpp` и управляется отдельным состоянием. На первом
+запуске режим по умолчанию становится официальным WSS Telegram:
 
 - режим WSS выбирается в списке прокси отдельной секцией: `Выкл`, официальный
   WSS Telegram или свой WSS gateway;
+- официальный WSS использует `kws2.web.telegram.org` и
+  `kws4.web.telegram.org` для поддержанных DC2/DC4 и не требует собственного
+  сервера;
 - WSS-настройки сохраняются отдельно от обычного `currentProxy`, включая
   `wssHost`, `wssPath`, `wssUseForMiniApps` и выбранный SOCKS5 upstream;
 - если WSS включён, legacy proxy path отключается, а MTProxy-настройки не
@@ -777,7 +781,8 @@ python3 Tools/verify_mtproxy_runtime_logs.py mtproxy-logs-live/<session>
 
 Для WSS режима открой:
 **Настройки -> Данные и память -> Прокси -> WSS-транспорт**. Официальный WSS
-не требует MTProxy-секрета. Для своего gateway укажи host/port/path, а SOCKS5
+использует `kws2/kws4.web.telegram.org` для DC2/DC4, не требует MTProxy-секрета
+и не требует своего сервера. Для своего gateway укажи host/port/path, а SOCKS5
 upstream выбери отдельно в WSS-секции списка прокси, если он нужен.
 
 Для плагинов exteraGram открой:

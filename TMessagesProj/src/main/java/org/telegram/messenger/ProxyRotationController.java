@@ -39,10 +39,10 @@ public class ProxyRotationController implements NotificationCenter.NotificationC
         editor.apply();
 
         SharedConfig.currentProxy = info;
-        ProxyRuntimeStateStore.markConnectionStarting(info);
+        ProxyRuntimeStateStore.markConnectionStarting(info, ProxyConnectionEvent.Origin.ROTATION_CANDIDATE);
         NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.proxyChangedByRotation);
         NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.proxySettingsChanged, ROTATION_SETTINGS_CHANGE);
-        ConnectionsManager.setProxySettings(true, SharedConfig.currentProxy.address, SharedConfig.currentProxy.port, SharedConfig.currentProxy.username, SharedConfig.currentProxy.password, SharedConfig.currentProxy.secret);
+        ConnectionsManager.setProxySettings(true, SharedConfig.currentProxy.address, SharedConfig.currentProxy.port, SharedConfig.currentProxy.username, SharedConfig.currentProxy.password, SharedConfig.currentProxy.secret, ProxyConnectionEvent.Origin.ROTATION_CANDIDATE);
         if ("fallback".equals(reason)) {
             log("switch fallback endpoint=" + endpoint(info) + " ping=" + info.ping);
         } else {
@@ -109,8 +109,8 @@ public class ProxyRotationController implements NotificationCenter.NotificationC
             String endpointKey = (String) args[1];
             String origin = args.length >= 3 && args[2] instanceof String
                     ? (String) args[2]
-                    : ProxyConnectionEvent.Origin.ACTIVE_PROXY.wireName;
-            if (!ProxyConnectionEvent.Origin.ACTIVE_PROXY.wireName.equals(origin)) {
+                    : ProxyConnectionEvent.Origin.ACTIVE_SOCKET.wireName;
+            if (!ProxyConnectionEvent.isActiveProxyOrigin(ProxyConnectionEvent.Origin.fromNative(origin))) {
                 log("ignore_non_active_origin origin=" + origin + " phase=" + ProxyCheckDiagnostics.normalize(diagnostic) + " endpoint=" + endpointKey);
                 return;
             }

@@ -248,14 +248,15 @@ void applyDatacenterAddress(JNIEnv *env, jclass c, jint instanceNum, jint datace
     }
 }
 
-void setProxySettings(JNIEnv *env, jclass c, jint instanceNum, jstring address, jint port, jstring username, jstring password, jstring secret, jobject options) {
+void setProxySettings(JNIEnv *env, jclass c, jint instanceNum, jstring address, jint port, jstring username, jstring password, jstring secret, jobject options, jint activationGeneration, jstring activationOrigin) {
     const char *addressStr = env->GetStringUTFChars(address, 0);
     const char *usernameStr = env->GetStringUTFChars(username, 0);
     const char *passwordStr = env->GetStringUTFChars(password, 0);
     const char *secretStr = env->GetStringUTFChars(secret, 0);
+    const char *activationOriginStr = activationOrigin != nullptr ? env->GetStringUTFChars(activationOrigin, 0) : nullptr;
     MtProxyOptions nativeOptions = readMtProxyOptions(env, options);
 
-    ConnectionsManager::getInstance(instanceNum).setProxySettings(addressStr, (uint16_t) port, usernameStr, passwordStr, secretStr, nativeOptions);
+    ConnectionsManager::getInstance(instanceNum).setProxySettings(addressStr, (uint16_t) port, usernameStr, passwordStr, secretStr, nativeOptions, activationGeneration > 0 ? (uint32_t) activationGeneration : 0, activationOriginStr != nullptr ? activationOriginStr : "active_socket");
 
     if (addressStr != 0) {
         env->ReleaseStringUTFChars(address, addressStr);
@@ -268,6 +269,17 @@ void setProxySettings(JNIEnv *env, jclass c, jint instanceNum, jstring address, 
     }
     if (secretStr != 0) {
         env->ReleaseStringUTFChars(secret, secretStr);
+    }
+    if (activationOriginStr != 0) {
+        env->ReleaseStringUTFChars(activationOrigin, activationOriginStr);
+    }
+}
+
+void setProxyActivationContext(JNIEnv *env, jclass c, jint instanceNum, jint activationGeneration, jstring activationOrigin) {
+    const char *activationOriginStr = activationOrigin != nullptr ? env->GetStringUTFChars(activationOrigin, 0) : nullptr;
+    ConnectionsManager::getInstance(instanceNum).setProxyActivationContext(activationGeneration > 0 ? (uint32_t) activationGeneration : 0, activationOriginStr != nullptr ? activationOriginStr : "active_socket");
+    if (activationOriginStr != 0 && activationOrigin != nullptr) {
+        env->ReleaseStringUTFChars(activationOrigin, activationOriginStr);
     }
 }
 
@@ -424,12 +436,12 @@ class Delegate : public ConnectiosManagerDelegate {
         jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onConnectionStateChanged, state, instanceNum);
     }
 
-    void onProxyConnectionStageChanged(int32_t instanceNum, std::string diagnostic, std::string endpointKey, std::string probeKey, std::string origin) {
+    void onProxyConnectionStageChanged(int32_t instanceNum, std::string diagnostic, std::string endpointKey, std::string probeKey, std::string origin, int32_t activationGeneration) {
         jstring diagnosticString = jniEnv[instanceNum]->NewStringUTF(diagnostic.c_str());
         jstring endpointKeyString = jniEnv[instanceNum]->NewStringUTF(endpointKey.c_str());
         jstring probeKeyString = jniEnv[instanceNum]->NewStringUTF(probeKey.c_str());
         jstring originString = jniEnv[instanceNum]->NewStringUTF(origin.c_str());
-        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onProxyConnectionStageChanged, instanceNum, diagnosticString, endpointKeyString, probeKeyString, originString);
+        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_onProxyConnectionStageChanged, instanceNum, diagnosticString, endpointKeyString, probeKeyString, originString, activationGeneration);
         if (diagnosticString != nullptr) {
             jniEnv[instanceNum]->DeleteLocalRef(diagnosticString);
         }
@@ -642,7 +654,7 @@ static JNINativeMethod ConnectionsManagerMethods[] = {
         {"native_cancelRequestsForGuid", "(II)V", (void *) cancelRequestsForGuid},
         {"native_bindRequestToGuid", "(III)V", (void *) bindRequestToGuid},
         {"native_applyDatacenterAddress", "(IILjava/lang/String;I)V", (void *) applyDatacenterAddress},
-        {"native_setProxySettings", "(ILjava/lang/String;ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Lorg/telegram/tgnet/MtProxyOptions;)V", (void *) setProxySettings},
+        {"native_setProxySettings", "(ILjava/lang/String;ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Lorg/telegram/tgnet/MtProxyOptions;ILjava/lang/String;)V", (void *) setProxySettings},
         {"native_setWssTransportSettings", "(IIILjava/lang/String;ILjava/lang/String;ZLjava/lang/String;ILjava/lang/String;Ljava/lang/String;ZZ)V", (void *) setWssTransportSettings},
         {"native_getConnectionState", "(I)I", (void *) getConnectionState},
         {"native_setUserId", "(IJ)V", (void *) setUserId},
@@ -653,6 +665,7 @@ static JNINativeMethod ConnectionsManagerMethods[] = {
         {"native_switchBackend", "(IZ)V", (void *) switchBackend},
         {"native_pauseNetwork", "(I)V", (void *) pauseNetwork},
         {"native_resumeNetwork", "(IZ)V", (void *) resumeNetwork},
+        {"native_setProxyActivationContext", "(IILjava/lang/String;)V", (void *) setProxyActivationContext},
         {"native_updateDcSettings", "(I)V", (void *) updateDcSettings},
         {"native_moveDatacenter", "(II)V", (void *) moveDatacenter},
         {"native_setIpStrategy", "(IB)V", (void *) setIpStrategy},
@@ -788,7 +801,7 @@ extern "C" int registerNativeTgNetFunctions(JavaVM *vm, JNIEnv *env) {
     if (jclass_ConnectionsManager_onConnectionStateChanged == 0) {
         return JNI_FALSE;
     }
-    jclass_ConnectionsManager_onProxyConnectionStageChanged = env->GetStaticMethodID(jclass_ConnectionsManager, "onProxyConnectionStageChanged", "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+    jclass_ConnectionsManager_onProxyConnectionStageChanged = env->GetStaticMethodID(jclass_ConnectionsManager, "onProxyConnectionStageChanged", "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;I)V");
     if (jclass_ConnectionsManager_onProxyConnectionStageChanged == 0) {
         return JNI_FALSE;
     }

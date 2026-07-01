@@ -173,14 +173,14 @@ def main() -> None:
         )
         or (
             "String normalizedPhase = ProxyCheckDiagnostics.normalize(event.phase)" in reducer_text
-            and "ProxyPhasePolicy.isFailure(normalizedPhase)" in reducer_text
+            and ("ProxyPhasePolicy.isFailure(normalizedPhase)" in reducer_text or "verdict.isFailure()" in reducer_text)
             and "!ProxyCheckDiagnostics.UNKNOWN_FAIL.equals(normalizedPhase)" in reducer_text
         ),
         "current proxy stage callback must accept concrete failure phases while rejecting unknown_fail noise",
     )
     require(
         "shouldKeepFreshFailure" in diagnostics
-        and "isEarlyRetryPhase" in diagnostics
+        and "isWeakRetryLivePhase" in diagnostics
         and "ProxyCheckDiagnostics.shouldKeepFreshFailure(proxyInfo, event.phase)" in visible_store_text,
         "fresh terminal failures must not be overwritten by early retry phases such as admission_queue or host_resolve_start",
     )
@@ -199,7 +199,7 @@ def main() -> None:
         "server_hello_hmac_ok must remain a handshake live phase, not a data-path usable success",
     )
     require(
-        "ProxyPhasePolicy.isProxyUsableSuccessPhase(event.phase)" in reducer_text
+        ("ProxyPhasePolicy.isProxyUsableSuccessPhase(event.phase)" in reducer_text or "if (verdict.usableSuccess)" in reducer_text)
         and "ProxyRuntimeStateStore.markConnectionUsable(currentProxy, event.phase, event.timestamp)" in reducer_text,
         "concrete success phases from native must clear stale Java endpoint backoff and fresh terminal failures",
     )
@@ -222,7 +222,7 @@ def main() -> None:
     require(
         "boolean selectedAccountStage = event.account == UserConfig.selectedAccount;" in reducer_text
         and "boolean stageTargetsCurrentProxy = currentProxy != null && concretePhase && ProxyEndpointKey.matchesLiveStage(currentProxy, event.endpointKey);" in reducer_text
-        and "if (selectedAccountStage && ProxyPhasePolicy.canOverwriteVisible(event.phase))" in reducer_text,
+        and "if (selectedAccountStage && verdict.canOverwriteVisible)" in reducer_text,
         "native proxy live stages from background accounts must not overwrite the shared visible proxy diagnostic",
     )
     stage_callback = reducer_text[
@@ -230,7 +230,7 @@ def main() -> None:
         reducer_text.find("private static boolean isActiveProxyEvent", reducer_text.find("static ProxyRuntimeStateStore.Decision reduce"))
     ]
     mark_failure_idx = stage_callback.find("rememberLiveFailure(currentProxy, event.phase, event.timestamp);")
-    selected_ui_idx = stage_callback.find("if (selectedAccountStage && ProxyPhasePolicy.canOverwriteVisible(event.phase))")
+    selected_ui_idx = stage_callback.find("if (selectedAccountStage && verdict.canOverwriteVisible)")
     require(
         mark_failure_idx >= 0
         and selected_ui_idx >= 0
@@ -239,7 +239,7 @@ def main() -> None:
     )
     require(
         "final String endpointKey" in text("connections_java")
-        and "ProxyConnectionEvent.nativeStage(currentAccount, diagnostic, endpointKey, probeKey, origin)" in text("connections_java")
+        and "ProxyConnectionEvent.nativeStage(currentAccount, diagnostic, endpointKey, probeKey, origin, activationGeneration)" in text("connections_java")
         and "ProxyEndpointKey.matchesLiveStage(currentProxy, event.endpointKey)" in reducer_text,
         "native proxy live stages from stale endpoint/secret keys must not overwrite the currently selected proxy diagnostic",
     )
@@ -256,8 +256,9 @@ def main() -> None:
     require(
         "onProxyConnectionStageChanged" in text("defines")
         and "probeKey" in text("defines")
+        and "activationGeneration" in text("defines")
         and "jclass_ConnectionsManager_onProxyConnectionStageChanged" in text("wrapper")
-        and 'GetStaticMethodID(jclass_ConnectionsManager, "onProxyConnectionStageChanged", "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V")' in text("wrapper"),
+        and 'GetStaticMethodID(jclass_ConnectionsManager, "onProxyConnectionStageChanged", "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;I)V")' in text("wrapper"),
         "JNI bridge must forward native proxy live stages with endpoint and probe keys to ConnectionsManager",
     )
     require(

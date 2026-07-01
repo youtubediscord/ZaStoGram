@@ -2852,7 +2852,6 @@ void ConnectionSocket::classifyMtProxyPreTcpTimeoutDiagnostic(const char *reason
 }
 
 std::string ConnectionSocket::deriveMtProxyTerminalDiagnostic(int32_t reason, int32_t error) {
-    (void) error;
     if (!isCurrentMtProxyConnection() || reason == 0) {
         return proxyCheckDiagnostic;
     }
@@ -2875,6 +2874,14 @@ std::string ConnectionSocket::deriveMtProxyTerminalDiagnostic(int32_t reason, in
             || !mtproxySocketConnectedLogged;
     if (startupActive) {
         const char *timelineDiagnostic = startupTimeline.terminalDiagnostic(mtproxySocketConnectedLogged);
+        if (!mtproxySocketConnectedLogged && startupTimeline.tcpConnectAttemptStarted()) {
+            if (error == ECONNREFUSED) {
+                return MtProxyPhase::TcpConnectionRefused;
+            }
+            if (error == ETIMEDOUT || reason == 2 || proxyCheckDiagnostic == MtProxyPhase::TcpConnectTimeout) {
+                return MtProxyPhase::TcpConnectTimeout;
+            }
+        }
         classifyMtProxyPreTcpTimeoutDiagnostic("derive_terminal");
         return timelineDiagnostic;
     }
@@ -3365,6 +3372,9 @@ bool ConnectionSocket::resetTransportSocketForOpenConnection() {
 }
 
 void ConnectionSocket::openConnection(std::string address, uint16_t port, std::string secret, bool ipv6, int32_t networkType, int32_t datacenterId, bool mediaConnection) {
+    ConnectionsManager &manager = ConnectionsManager::getInstance(instanceNum);
+    proxyActivationGeneration = manager.getProxyActivationGeneration();
+    proxyActivationOrigin = manager.getProxyActivationOrigin();
     releaseMtProxyProbeLease();
     releaseMtProxyEndpointTcpConnect("openConnection_reset");
     cancelProxyHandshakeAdmission();
@@ -3473,7 +3483,6 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
         proxyOptions = ConnectionsManager::getInstance(instanceNum).proxyMtProxyOptions;
     }
 
-    ConnectionsManager &manager = ConnectionsManager::getInstance(instanceNum);
     bool shouldUseWss = overrideProxyAddress.empty()
             && manager.wssEnabled
             && manager.wssTransportMode != WssTransport::WSS_TRANSPORT_OFF;
@@ -4058,7 +4067,11 @@ void ConnectionSocket::publishProxyConnectionStage(const char *diagnostic) {
     }
     ConnectionsManager &manager = ConnectionsManager::getInstance(instanceNum);
     if (manager.delegate != nullptr) {
-        manager.delegate->onProxyConnectionStageChanged(instanceNum, diagnostic, endpointKey, currentMtProxyProbeKey, proxyConnectionStageOrigin());
+        std::string origin = proxyConnectionStageOrigin();
+        if (origin == "active_socket" && !proxyActivationOrigin.empty()) {
+            origin = proxyActivationOrigin;
+        }
+        manager.delegate->onProxyConnectionStageChanged(instanceNum, diagnostic, endpointKey, currentMtProxyProbeKey, origin, (int32_t) proxyActivationGeneration);
     }
 }
 
@@ -4084,7 +4097,7 @@ void ConnectionSocket::publishMtProxySocketObservation(const MtProxySocketObserv
 }
 
 std::string ConnectionSocket::proxyConnectionStageOrigin() {
-    return "active_proxy";
+    return "active_socket";
 }
 
 bool ConnectionSocket::matchesMtProxyEndpointKey(const std::string &endpointKey) {
@@ -5052,7 +5065,7 @@ bool ConnectionSocket::checkTimeout(int64_t now) {
             if (!onConnectedSent || hasPendingRequests()) {
                 proxyCheckDiagnostic = startupDecision.diagnostic != nullptr ? startupDecision.diagnostic : "connection_not_started";
                 if (LOGS_ENABLED) {
-                    if (strcmp(proxyCheckDiagnostic.c_str(), MtProxyPhase::TcpNotConnected) == 0) {
+                    if (strcmp(proxyCheckDiagnostic.c_str(), MtProxyPhase::TcpConnectTimeout) == 0) {
                         DEBUG_D("connection(%p) mtproxy_startup tcp_connect_timeout elapsed_ms=%lld deadline_ms=%lld start_ms=%lld", this, (long long) startupDecision.elapsedMs, (long long) startupDecision.deadlineMs, (long long) startupDecision.startMs);
                     } else {
                         DEBUG_D("connection(%p) mtproxy_startup pre_tcp_timeout diagnostic=%s event=%s phase=%s elapsed_ms=%lld deadline_ms=%lld start_ms=%lld", this, proxyCheckDiagnostic.c_str(), startupDecision.event != nullptr ? startupDecision.event : "unknown", MtProxyStartupTimeline::phaseName(startupDecision.phase), (long long) startupDecision.elapsedMs, (long long) startupDecision.deadlineMs, (long long) startupDecision.startMs);

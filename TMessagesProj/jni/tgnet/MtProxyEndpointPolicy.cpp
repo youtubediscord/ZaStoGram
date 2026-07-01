@@ -86,11 +86,17 @@ static int64_t cooldownMs(MtProxyEndpointResilienceState &state, const std::stri
         return MT_PROXY_ENDPOINT_INVALID_SECRET_COOLDOWN_MIN_MS + endpointSecureRandomBounded((uint32_t) MT_PROXY_ENDPOINT_INVALID_SECRET_COOLDOWN_JITTER_MS);
     }
     int32_t penalty = 1;
-    bool networkFailure = diagnostic == "host_resolve_failed" || diagnostic == "host_resolve_timeout" || diagnostic == MtProxyPhase::TcpNotConnected;
+    bool networkFailure = diagnostic == "host_resolve_failed"
+            || diagnostic == "host_resolve_timeout"
+            || diagnostic == MtProxyPhase::TcpNotConnected
+            || diagnostic == "tcp_connection_refused"
+            || diagnostic == "tcp_connect_timeout";
     if (diagnostic == "host_resolve_failed" || diagnostic == "host_resolve_timeout") {
         penalty = ++state.hostResolveFailures;
         state.tcpFailures = 0;
-    } else if (diagnostic == MtProxyPhase::TcpNotConnected) {
+    } else if (diagnostic == MtProxyPhase::TcpNotConnected
+            || diagnostic == "tcp_connection_refused"
+            || diagnostic == "tcp_connect_timeout") {
         penalty = ++state.tcpFailures;
     } else if (diagnostic == "mtproxy_packet_sent_no_response" || diagnostic == "tcp_connected_no_pong") {
         penalty = ++state.plainNoResponseFailures;
@@ -157,6 +163,8 @@ static bool failureCanBeShadowedBySuccess(const std::string &diagnostic) {
     return diagnostic == "host_resolve_failed"
             || diagnostic == "host_resolve_timeout"
             || diagnostic == MtProxyPhase::TcpNotConnected
+            || diagnostic == "tcp_connection_refused"
+            || diagnostic == "tcp_connect_timeout"
             || diagnostic == "tcp_connected_no_pong"
             || diagnostic == "true_client_hello_timeout"
             || diagnostic == "client_hello_sent_no_server_hello"
@@ -277,6 +285,8 @@ std::string MtProxyEndpointPolicy::stateKeyForPhase(const std::string &phase, co
     if ((phase == "host_resolve_failed"
             || phase == "host_resolve_timeout"
             || phase == MtProxyPhase::TcpNotConnected
+            || phase == "tcp_connection_refused"
+            || phase == "tcp_connect_timeout"
             || phase == "tcp_connected_no_pong"
             || phase == "dropped_early_after_appdata")
             && !networkEndpointKey.empty()) {
@@ -290,9 +300,11 @@ std::string MtProxyEndpointPolicy::stateKeyForPhase(const std::string &phase, co
 
 bool MtProxyEndpointPolicy::failureNeedsCooldown(const std::string &diagnostic) {
     return diagnostic == "host_resolve_failed"
-           || diagnostic == "host_resolve_timeout"
-           || diagnostic == MtProxyPhase::TcpNotConnected
-           || diagnostic == "tcp_connected_no_pong"
+	           || diagnostic == "host_resolve_timeout"
+	           || diagnostic == MtProxyPhase::TcpNotConnected
+	           || diagnostic == "tcp_connection_refused"
+	           || diagnostic == "tcp_connect_timeout"
+	           || diagnostic == "tcp_connected_no_pong"
            || diagnostic == MtProxyPhase::SecretParseInvalidDomainControlChar
            || diagnostic == MtProxyPhase::SecretParseInvalidDomain
            || diagnostic == MtProxyPhase::HandshakeProfilesExhausted

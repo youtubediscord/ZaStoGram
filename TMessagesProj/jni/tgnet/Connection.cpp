@@ -66,6 +66,8 @@ static bool mtProxyDiagnosticNeedsReconnectBackoff(const char *diagnostic) {
     return strcmp(diagnostic, MtProxyPhase::HostResolveFailed) == 0 ||
            strcmp(diagnostic, MtProxyPhase::HostResolveTimeout) == 0 ||
            strcmp(diagnostic, MtProxyPhase::TcpNotConnected) == 0 ||
+           strcmp(diagnostic, MtProxyPhase::TcpConnectionRefused) == 0 ||
+           strcmp(diagnostic, MtProxyPhase::TcpConnectTimeout) == 0 ||
            strcmp(diagnostic, "tcp_connected_no_pong") == 0 ||
            strcmp(diagnostic, MtProxyPhase::SecretParseInvalidDomainControlChar) == 0 ||
            strcmp(diagnostic, MtProxyPhase::SecretParseInvalidDomain) == 0 ||
@@ -126,7 +128,7 @@ static uint32_t mtProxyNextReconnectBackoffMs(ConnectionType type, uint32_t prev
 }
 
 std::string Connection::proxyConnectionStageOrigin() {
-    return ((int32_t) connectionType & 0x0000ffff) == ConnectionTypeProxy ? "proxy_check" : "active_proxy";
+    return ((int32_t) connectionType & 0x0000ffff) == ConnectionTypeProxy ? "proxy_check" : "active_socket";
 }
 
 Connection::Connection(Datacenter *datacenter, ConnectionType type, int8_t num) : ConnectionSession(datacenter->instanceNum), ConnectionSocket(datacenter->instanceNum) {

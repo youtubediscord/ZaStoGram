@@ -77,6 +77,8 @@ private:
     ConnectionSocketStateMachine stateMachine;
     bool wssUsedRelayFallback = false;
     bool suppressNextProxyCloseDiagnostic = false;
+    uint32_t proxyActivationGeneration = 0;
+    std::string proxyActivationOrigin = "active_socket";
 
     int32_t checkSocketError(int32_t *error);
     void closeSocket(int32_t reason, int32_t error);

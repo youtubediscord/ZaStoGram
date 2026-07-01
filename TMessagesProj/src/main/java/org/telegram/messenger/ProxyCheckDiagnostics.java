@@ -48,6 +48,8 @@ public class ProxyCheckDiagnostics {
     public static final String HOST_RESOLVE_TIMEOUT = "host_resolve_timeout";
     public static final String TCP_CONNECT_GATE_TIMEOUT = "tcp_connect_gate_timeout";
     public static final String TCP_NOT_CONNECTED = "tcp_not_connected";
+    public static final String TCP_CONNECTION_REFUSED = "tcp_connection_refused";
+    public static final String TCP_CONNECT_TIMEOUT = "tcp_connect_timeout";
     public static final String TCP_CONNECTED_NO_PONG = "tcp_connected_no_pong";
     public static final String NETWORK_BLOCK_SUSPECTED = "network_block_suspected";
     public static final String SECRET_PARSE_INVALID_DOMAIN_CONTROL_CHAR = "secret_parse_invalid_domain_control_char";
@@ -118,6 +120,8 @@ public class ProxyCheckDiagnostics {
             case HOST_RESOLVE_TIMEOUT:
             case TCP_CONNECT_GATE_TIMEOUT:
             case TCP_NOT_CONNECTED:
+            case TCP_CONNECTION_REFUSED:
+            case TCP_CONNECT_TIMEOUT:
             case TCP_CONNECTED_NO_PONG:
             case NETWORK_BLOCK_SUSPECTED:
             case SECRET_PARSE_INVALID_DOMAIN_CONTROL_CHAR:
@@ -155,12 +159,21 @@ public class ProxyCheckDiagnostics {
         return ProxyPhasePolicy.isLivePhase(diagnostic);
     }
 
-    public static boolean isEarlyRetryPhase(String diagnostic) {
+    public static boolean isWeakRetryLivePhase(String diagnostic) {
         switch (normalize(diagnostic)) {
             case ADMISSION_QUEUE:
+            case ENDPOINT_COOLDOWN:
+            case TCP_CONNECT_GATE:
+            case DNS_COALESCE_WAIT:
+            case DNS_CACHE_HIT:
+            case DNS_CACHE_STORE:
+            case MTPROXY_PROBE_WAIT:
+            case PHASE_ADAPTIVE_RECIPE:
+            case SECRET_DOMAIN_SANITIZED:
             case HOST_RESOLVE_START:
             case CONNECT_START:
             case SOCKET_CONNECT_START:
+            case SOCKET_CONNECTED:
                 return true;
             default:
                 return false;
@@ -215,7 +228,11 @@ public class ProxyCheckDiagnostics {
                 && proxyInfo.lastCheckDiagnosticTime != 0
                 && android.os.SystemClock.elapsedRealtime() - proxyInfo.lastCheckDiagnosticTime < FAILURE_HOLD_EARLY_RETRY_MS
                 && isFailure(proxyInfo.lastCheckDiagnostic)
-                && isEarlyRetryPhase(incomingDiagnostic);
+                && isWeakRetryLivePhase(incomingDiagnostic);
+    }
+
+    static long freshFailureHoldEarlyRetryMs() {
+        return FAILURE_HOLD_EARLY_RETRY_MS;
     }
 
     public static boolean isProxyUsableSuccessPhase(String diagnostic) {
@@ -401,6 +418,10 @@ public class ProxyCheckDiagnostics {
     }
 
     private static HeaderStatusTitle diagnosticTitle(String diagnostic) {
+        ProxyEndpointVerdict verdict = ProxyPhasePolicy.verdictForPhase(diagnostic, 0);
+        if (verdict != null) {
+            return title(verdict.userTextKey, diagnosticResourceId(verdict.userTextKey));
+        }
         switch (normalize(diagnostic)) {
             case OK:
                 return title("Available", R.string.Available);
@@ -418,6 +439,10 @@ public class ProxyCheckDiagnostics {
                 return title("ProxyStatusDnsCacheHit", R.string.ProxyStatusDnsCacheHit);
             case DNS_CACHE_STORE:
                 return title("ProxyStatusDnsCacheStore", R.string.ProxyStatusDnsCacheStore);
+            case MTPROXY_PROBE_WAIT:
+                return title("ProxyStatusMtproxyProbeWait", R.string.ProxyStatusMtproxyProbeWait);
+            case MTPROXY_PROBE_WAIT_TIMEOUT:
+                return title("ProxyStatusMtproxyProbeWaitTimeout", R.string.ProxyStatusMtproxyProbeWaitTimeout);
             case PHASE_ADAPTIVE_RECIPE:
                 return title("ProxyStatusPhaseAdaptiveRecipe", R.string.ProxyStatusPhaseAdaptiveRecipe);
             case SECRET_DOMAIN_SANITIZED:
@@ -472,6 +497,10 @@ public class ProxyCheckDiagnostics {
                 return title("ProxyStatusTcpConnectGateTimeout", R.string.ProxyStatusTcpConnectGateTimeout);
             case TCP_NOT_CONNECTED:
                 return title("ProxyStatusTcpNotConnected", R.string.ProxyStatusTcpNotConnected);
+            case TCP_CONNECTION_REFUSED:
+                return title("ProxyStatusTcpConnectionRefused", R.string.ProxyStatusTcpConnectionRefused);
+            case TCP_CONNECT_TIMEOUT:
+                return title("ProxyStatusTcpConnectTimeout", R.string.ProxyStatusTcpConnectTimeout);
             case TCP_CONNECTED_NO_PONG:
                 return title("ProxyStatusTcpConnectedNoPong", R.string.ProxyStatusTcpConnectedNoPong);
             case NETWORK_BLOCK_SUSPECTED:
@@ -483,6 +512,10 @@ public class ProxyCheckDiagnostics {
             case TRUE_CLIENT_HELLO_TIMEOUT:
             case CLIENT_HELLO_SENT_NO_SERVER_HELLO:
                 return title("ProxyStatusClientHelloNoServerHello", R.string.ProxyStatusClientHelloNoServerHello);
+            case FAKETLS_SERVER_HELLO_WAIT_TIMEOUT:
+                return title("ProxyStatusFaketlsServerHelloWaitTimeout", R.string.ProxyStatusFaketlsServerHelloWaitTimeout);
+            case SERVER_CLOSED_AFTER_CLIENT_HELLO:
+                return title("ProxyStatusServerClosedAfterClientHello", R.string.ProxyStatusServerClosedAfterClientHello);
             case TLS_ALERT_AFTER_CLIENT_HELLO:
                 return title("ProxyStatusTlsAlertAfterClientHello", R.string.ProxyStatusTlsAlertAfterClientHello);
             case SHORT_TLS_RESPONSE_AFTER_CLIENT_HELLO:
@@ -492,6 +525,8 @@ public class ProxyCheckDiagnostics {
                 return title("ProxyStatusUnrecognizedTlsResponseAfterClientHello", R.string.ProxyStatusUnrecognizedTlsResponseAfterClientHello);
             case SERVER_HELLO_HMAC_MISMATCH:
                 return title("ProxyStatusServerHelloHmacMismatch", R.string.ProxyStatusServerHelloHmacMismatch);
+            case BACKGROUND_HANDSHAKE_ABORTED:
+                return title("ProxyStatusBackgroundHandshakeAborted", R.string.ProxyStatusBackgroundHandshakeAborted);
             case HANDSHAKE_PROFILES_EXHAUSTED:
                 return title("ProxyStatusHandshakeProfilesExhausted", R.string.ProxyStatusHandshakeProfilesExhausted);
             case MTPROXY_PACKET_SENT_NO_RESPONSE:
@@ -542,6 +577,10 @@ public class ProxyCheckDiagnostics {
     }
 
     public static String diagnosticText(String diagnostic) {
+        ProxyEndpointVerdict verdict = ProxyPhasePolicy.verdictForPhase(diagnostic, 0);
+        if (verdict != null) {
+            return LocaleController.getString(diagnosticResourceId(verdict.userTextKey));
+        }
         switch (normalize(diagnostic)) {
             case OK:
                 return LocaleController.getString(R.string.Available);
@@ -559,6 +598,10 @@ public class ProxyCheckDiagnostics {
                 return LocaleController.getString(R.string.ProxyStatusDnsCacheHit);
             case DNS_CACHE_STORE:
                 return LocaleController.getString(R.string.ProxyStatusDnsCacheStore);
+            case MTPROXY_PROBE_WAIT:
+                return LocaleController.getString(R.string.ProxyStatusMtproxyProbeWait);
+            case MTPROXY_PROBE_WAIT_TIMEOUT:
+                return LocaleController.getString(R.string.ProxyStatusMtproxyProbeWaitTimeout);
             case PHASE_ADAPTIVE_RECIPE:
                 return LocaleController.getString(R.string.ProxyStatusPhaseAdaptiveRecipe);
             case SECRET_DOMAIN_SANITIZED:
@@ -613,6 +656,10 @@ public class ProxyCheckDiagnostics {
                 return LocaleController.getString(R.string.ProxyStatusTcpConnectGateTimeout);
             case TCP_NOT_CONNECTED:
                 return LocaleController.getString(R.string.ProxyStatusTcpNotConnected);
+            case TCP_CONNECTION_REFUSED:
+                return LocaleController.getString(R.string.ProxyStatusTcpConnectionRefused);
+            case TCP_CONNECT_TIMEOUT:
+                return LocaleController.getString(R.string.ProxyStatusTcpConnectTimeout);
             case TCP_CONNECTED_NO_PONG:
                 return LocaleController.getString(R.string.ProxyStatusTcpConnectedNoPong);
             case NETWORK_BLOCK_SUSPECTED:
@@ -624,6 +671,10 @@ public class ProxyCheckDiagnostics {
             case TRUE_CLIENT_HELLO_TIMEOUT:
             case CLIENT_HELLO_SENT_NO_SERVER_HELLO:
                 return LocaleController.getString(R.string.ProxyStatusClientHelloNoServerHello);
+            case FAKETLS_SERVER_HELLO_WAIT_TIMEOUT:
+                return LocaleController.getString(R.string.ProxyStatusFaketlsServerHelloWaitTimeout);
+            case SERVER_CLOSED_AFTER_CLIENT_HELLO:
+                return LocaleController.getString(R.string.ProxyStatusServerClosedAfterClientHello);
             case TLS_ALERT_AFTER_CLIENT_HELLO:
                 return LocaleController.getString(R.string.ProxyStatusTlsAlertAfterClientHello);
             case SHORT_TLS_RESPONSE_AFTER_CLIENT_HELLO:
@@ -633,6 +684,8 @@ public class ProxyCheckDiagnostics {
                 return LocaleController.getString(R.string.ProxyStatusUnrecognizedTlsResponseAfterClientHello);
             case SERVER_HELLO_HMAC_MISMATCH:
                 return LocaleController.getString(R.string.ProxyStatusServerHelloHmacMismatch);
+            case BACKGROUND_HANDSHAKE_ABORTED:
+                return LocaleController.getString(R.string.ProxyStatusBackgroundHandshakeAborted);
             case HANDSHAKE_PROFILES_EXHAUSTED:
                 return LocaleController.getString(R.string.ProxyStatusHandshakeProfilesExhausted);
             case MTPROXY_PACKET_SENT_NO_RESPONSE:
@@ -648,6 +701,131 @@ public class ProxyCheckDiagnostics {
             case UNKNOWN_FAIL:
             default:
                 return LocaleController.getString(R.string.ProxyStatusUnknownFail);
+        }
+    }
+
+    private static int diagnosticResourceId(String userTextKey) {
+        if (TextUtils.isEmpty(userTextKey)) {
+            return R.string.ProxyStatusUnknownFail;
+        }
+        switch (userTextKey) {
+            case "Available":
+                return R.string.Available;
+            case "ProxyStatusCheckingConnection":
+                return R.string.ProxyStatusCheckingConnection;
+            case "ProxyStatusAdmissionQueue":
+                return R.string.ProxyStatusAdmissionQueue;
+            case "ProxyStatusEndpointCooldown":
+                return R.string.ProxyStatusEndpointCooldown;
+            case "ProxyStatusTcpConnectGate":
+                return R.string.ProxyStatusTcpConnectGate;
+            case "ProxyStatusDnsCoalesceWait":
+                return R.string.ProxyStatusDnsCoalesceWait;
+            case "ProxyStatusDnsCacheHit":
+                return R.string.ProxyStatusDnsCacheHit;
+            case "ProxyStatusDnsCacheStore":
+                return R.string.ProxyStatusDnsCacheStore;
+            case "ProxyStatusMtproxyProbeWait":
+                return R.string.ProxyStatusMtproxyProbeWait;
+            case "ProxyStatusMtproxyProbeWaitTimeout":
+                return R.string.ProxyStatusMtproxyProbeWaitTimeout;
+            case "ProxyStatusPhaseAdaptiveRecipe":
+                return R.string.ProxyStatusPhaseAdaptiveRecipe;
+            case "ProxyStatusSecretDomainSanitized":
+                return R.string.ProxyStatusSecretDomainSanitized;
+            case "ProxyStatusHostResolve":
+                return R.string.ProxyStatusHostResolve;
+            case "ProxyStatusConnectStart":
+                return R.string.ProxyStatusConnectStart;
+            case "ProxyStatusTcpConnecting":
+                return R.string.ProxyStatusTcpConnecting;
+            case "ProxyStatusTcpConnected":
+                return R.string.ProxyStatusTcpConnected;
+            case "ProxyStatusClientHelloSent":
+                return R.string.ProxyStatusClientHelloSent;
+            case "ProxyStatusAdmissionHoldAfterClientHelloFailure":
+                return R.string.ProxyStatusAdmissionHoldAfterClientHelloFailure;
+            case "ProxyStatusServerHelloOk":
+                return R.string.ProxyStatusServerHelloOk;
+            case "ProxyStatusMtprotoStarting":
+                return R.string.ProxyStatusMtprotoStarting;
+            case "ProxyStatusFirstDataSent":
+                return R.string.ProxyStatusFirstDataSent;
+            case "ProxyStatusFirstDataReceived":
+                return R.string.ProxyStatusFirstDataReceived;
+            case "ProxyStatusFirstMtproxyPacketSent":
+                return R.string.ProxyStatusFirstMtproxyPacketSent;
+            case "ProxyStatusFirstMtproxyPacketReceived":
+                return R.string.ProxyStatusFirstMtproxyPacketReceived;
+            case "ProxyStatusWaitingTcp":
+                return R.string.ProxyStatusWaitingTcp;
+            case "ProxyStatusStartFailed":
+                return R.string.ProxyStatusStartFailed;
+            case "ProxyStatusConnectionNotStarted":
+                return R.string.ProxyStatusConnectionNotStarted;
+            case "ProxyStatusConnectingTimeout":
+                return R.string.ProxyStatusConnectingTimeout;
+            case "ProxyStatusAdmissionTimeout":
+                return R.string.ProxyStatusAdmissionTimeout;
+            case "ProxyStatusEndpointCooldownTimeout":
+                return R.string.ProxyStatusEndpointCooldownTimeout;
+            case "ProxyStatusDnsCoalesceTimeout":
+                return R.string.ProxyStatusDnsCoalesceTimeout;
+            case "ProxyStatusDnsNegativeCacheHit":
+                return R.string.ProxyStatusDnsNegativeCacheHit;
+            case "ProxyStatusDnsBlockedZeroAddress":
+                return R.string.ProxyStatusDnsBlockedZeroAddress;
+            case "ProxyStatusHostResolveFailed":
+                return R.string.ProxyStatusHostResolveFailed;
+            case "ProxyStatusHostResolveTimeout":
+                return R.string.ProxyStatusHostResolveTimeout;
+            case "ProxyStatusTcpConnectGateTimeout":
+                return R.string.ProxyStatusTcpConnectGateTimeout;
+            case "ProxyStatusTcpNotConnected":
+                return R.string.ProxyStatusTcpNotConnected;
+            case "ProxyStatusTcpConnectionRefused":
+                return R.string.ProxyStatusTcpConnectionRefused;
+            case "ProxyStatusTcpConnectTimeout":
+                return R.string.ProxyStatusTcpConnectTimeout;
+            case "ProxyStatusTcpConnectedNoPong":
+                return R.string.ProxyStatusTcpConnectedNoPong;
+            case "ProxyStatusNetworkBlockSuspected":
+                return R.string.ProxyStatusNetworkBlockSuspected;
+            case "ProxyStatusSecretInvalidDomainControlChar":
+                return R.string.ProxyStatusSecretInvalidDomainControlChar;
+            case "ProxyStatusSecretInvalidDomain":
+                return R.string.ProxyStatusSecretInvalidDomain;
+            case "ProxyStatusClientHelloNoServerHello":
+                return R.string.ProxyStatusClientHelloNoServerHello;
+            case "ProxyStatusFaketlsServerHelloWaitTimeout":
+                return R.string.ProxyStatusFaketlsServerHelloWaitTimeout;
+            case "ProxyStatusServerClosedAfterClientHello":
+                return R.string.ProxyStatusServerClosedAfterClientHello;
+            case "ProxyStatusTlsAlertAfterClientHello":
+                return R.string.ProxyStatusTlsAlertAfterClientHello;
+            case "ProxyStatusShortTlsResponseAfterClientHello":
+                return R.string.ProxyStatusShortTlsResponseAfterClientHello;
+            case "ProxyStatusUnrecognizedTlsResponseAfterClientHello":
+                return R.string.ProxyStatusUnrecognizedTlsResponseAfterClientHello;
+            case "ProxyStatusServerHelloHmacMismatch":
+                return R.string.ProxyStatusServerHelloHmacMismatch;
+            case "ProxyStatusBackgroundHandshakeAborted":
+                return R.string.ProxyStatusBackgroundHandshakeAborted;
+            case "ProxyStatusHandshakeProfilesExhausted":
+                return R.string.ProxyStatusHandshakeProfilesExhausted;
+            case "ProxyStatusMtproxyPacketSentNoResponse":
+                return R.string.ProxyStatusMtproxyPacketSentNoResponse;
+            case "ProxyStatusPostHandshakeNoAppData":
+                return R.string.ProxyStatusPostHandshakeNoAppData;
+            case "ProxyStatusDroppedEarlyAfterAppData":
+                return R.string.ProxyStatusDroppedEarlyAfterAppData;
+            case "ProxyStatusDroppedAfterAppData":
+                return R.string.ProxyStatusDroppedAfterAppData;
+            case "ProxyStatusCancelled":
+                return R.string.ProxyStatusCancelled;
+            case "ProxyStatusUnknownFail":
+            default:
+                return R.string.ProxyStatusUnknownFail;
         }
     }
 }

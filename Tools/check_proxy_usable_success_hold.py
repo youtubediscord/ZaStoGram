@@ -36,6 +36,8 @@ USABLE_SUCCESS_PHASES = (
 
 PUNITIVE_FAILURE_PHASES = (
     ("tcp_not_connected", "TCP_NOT_CONNECTED"),
+    ("tcp_connection_refused", "TCP_CONNECTION_REFUSED"),
+    ("tcp_connect_timeout", "TCP_CONNECT_TIMEOUT"),
     ("host_resolve_failed", "HOST_RESOLVE_FAILED"),
     ("host_resolve_timeout", "HOST_RESOLVE_TIMEOUT"),
     ("handshake_profiles_exhausted", "HANDSHAKE_PROFILES_EXHAUSTED"),
@@ -310,7 +312,7 @@ def main() -> int:
     helper = method_body(visible, "static boolean shouldHoldLivePhaseByUsableSuccess")
     live_hold_idx = native_stage.find("decision=held_live_by_usable_success")
     connected_hold_idx = native_stage.find("decision=held_live_by_current_proxy_usable")
-    visible_write_idx = native_stage.find("if (selectedAccountStage && ProxyPhasePolicy.canOverwriteVisible(event.phase))")
+    visible_write_idx = native_stage.find("if (selectedAccountStage && verdict.canOverwriteVisible)")
     helper_call_idx = native_stage.find("ProxyVisibleStateStore.shouldHoldLivePhaseByUsableSuccess(currentProxy, event)")
     require(
         helper
@@ -408,11 +410,13 @@ def main() -> int:
         failures,
     )
     mark_start = method_body(visible, "static void markConnectionStarting")
-    runtime_mark_start = method_body(store, "public static void markConnectionStarting")
+    runtime_mark_start = method_body(store, "public static void markConnectionStarting(SharedConfig.ProxyInfo proxyInfo, ProxyConnectionEvent.Origin origin)")
     connect_start_hold_idx = mark_start.find("decision=held_live_by_usable_success")
     current_proxy_hold_idx = mark_start.find("decision=held_live_by_current_proxy_usable")
-    clear_hold_idx = mark_start.find("ProxyHealthStore.clearUsableSuccessHold(proxyInfo)")
-    mark_visible_idx = mark_start.find("ProxyStatusMirror.markConnectionStarting(proxyInfo, now)")
+    force_visible_idx = mark_start.find("boolean forceVisibleActivation")
+    force_clear_idx = mark_start.find("ProxyHealthStore.clearUsableSuccessHold(proxyInfo, now, origin.wireName)")
+    force_return_idx = mark_start.find("return;", force_clear_idx)
+    mark_visible_idx = mark_start.find("ProxyStatusMirror.markConnectionStarting(proxyInfo, now)", connect_start_hold_idx)
     require(
         connect_start_hold_idx >= 0
         and mark_visible_idx >= 0
@@ -428,8 +432,13 @@ def main() -> int:
         failures,
     )
     require(
-        clear_hold_idx == -1,
-        "Java connect_start must not clear usable-success hold; only endpoint switches or real punitive failures may do that",
+        force_visible_idx >= 0
+        and force_clear_idx >= 0
+        and force_return_idx >= 0
+        and force_visible_idx < force_clear_idx < force_return_idx < connect_start_hold_idx
+        and "origin == ProxyConnectionEvent.Origin.USER_SELECT" in mark_start
+        and "origin == ProxyConnectionEvent.Origin.SETTINGS_CHANGE" in mark_start,
+        "Java connect_start must clear usable-success hold only for explicit user/settings activation before the normal hold path",
         failures,
     )
     require(

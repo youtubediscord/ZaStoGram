@@ -173,7 +173,7 @@ jobs:
           if [ -n "$KEYSTORE_PASSWORD" ]; then
             SIGN_ARGS="-PRELEASE_STORE_PASSWORD=$KEYSTORE_PASSWORD -PRELEASE_KEY_PASSWORD=${KEY_PASSWORD:-$KEYSTORE_PASSWORD} -PRELEASE_KEY_ALIAS=${KEY_ALIAS:-zastogram}"
           fi
-          ./gradlew --build-cache --profile ":TMessagesProj_AppStandalone:assemble${{ matrix.flavor }}Standalone" $SIGN_ARGS --stacktrace
+          ./gradlew --build-cache --profile -PzastoAbiFilter=${{ matrix.abi }} ":TMessagesProj_AppStandalone:assemble${{ matrix.flavor }}Standalone" $SIGN_ARGS --stacktrace
 
       - name: Stage APK (${{ matrix.abi }})
         run: |

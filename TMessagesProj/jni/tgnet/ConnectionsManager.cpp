@@ -4097,9 +4097,13 @@ void ConnectionsManager::init(uint32_t version, int32_t layer, int32_t apiId, st
     }
 }
 
-void ConnectionsManager::setProxySettings(std::string address, uint16_t port, std::string username, std::string password, std::string secret, const MtProxyOptions &options) {
+void ConnectionsManager::setProxySettings(std::string address, uint16_t port, std::string username, std::string password, std::string secret, const MtProxyOptions &options, uint32_t activationGeneration, std::string activationOrigin) {
     MtProxyOptions normalizedOptions = normalizeMtProxyOptions(options);
-    scheduleTask([&, address, port, username, password, secret, normalizedOptions] {
+    scheduleTask([&, address, port, username, password, secret, normalizedOptions, activationGeneration, activationOrigin] {
+        if (activationGeneration != 0) {
+            proxyActivationGeneration = activationGeneration;
+            proxyActivationOrigin = activationOrigin.empty() ? "active_socket" : activationOrigin;
+        }
         std::string newSecret = decodeSecret(secret);
         bool secretChanged = proxySecret != newSecret;
         bool optionsChanged = proxyMtProxyOptions != normalizedOptions;
@@ -4131,6 +4135,24 @@ void ConnectionsManager::setProxySettings(std::string address, uint16_t port, st
             requestTransportSettingsReconnect("proxy_settings_changed");
         }
     });
+}
+
+void ConnectionsManager::setProxyActivationContext(uint32_t activationGeneration, std::string activationOrigin) {
+    scheduleTask([&, activationGeneration, activationOrigin] {
+        if (activationGeneration == 0) {
+            return;
+        }
+        proxyActivationGeneration = activationGeneration;
+        proxyActivationOrigin = activationOrigin.empty() ? "active_socket" : activationOrigin;
+    });
+}
+
+uint32_t ConnectionsManager::getProxyActivationGeneration() {
+    return proxyActivationGeneration;
+}
+
+std::string ConnectionsManager::getProxyActivationOrigin() {
+    return proxyActivationOrigin;
 }
 
 static int32_t normalizeWssTransportMode(int32_t mode) {

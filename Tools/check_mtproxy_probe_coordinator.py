@@ -51,7 +51,7 @@ def base_log(*lines: str) -> str:
         "logcat.txt:3: 06-30 13:59:30.020 connection(0x1) mtproxy_startup endpoint_handshake_ok reason=server_hello_hmac_ok",
         "logcat.txt:4: 06-30 13:59:30.090 connection(0x1) mtproxy_startup first_tls_app_recv payload=1015",
         "logcat.txt:5: 06-30 13:59:30.100 connection(0x1) mtproxy_startup endpoint_data_path_success network_key=sberbank.dns.army:45631 key=sberbank.dns.army:45631:ee:sberbank.dns.army reason=first_tls_app_recv",
-        "logcat.txt:6: 06-30 13:59:30.110 proxy_control decision=visible_usable_success source=native_stage origin=active_proxy account=0 phase=first_tls_app_recv endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army",
+        "logcat.txt:6: 06-30 13:59:30.110 proxy_control decision=visible_usable_success source=native_stage origin=active_socket account=0 phase=first_tls_app_recv endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army",
     ]
     for index, line in enumerate(lines, start=7):
         result.append(f"logcat.txt:{index}: {line}")
@@ -63,7 +63,7 @@ def verify_runtime_contract(failures: list[str]) -> None:
         base_log(
             "06-30 14:00:00.000 connection(0x1) mtproxy_startup probe_start key=fast2.mtproxy.zip:443:secret_hash=1111111111111111:xapi.ozon.ru endpoint=fast2.mtproxy.zip:443:ee:xapi.ozon.ru generation=1",
             "06-30 14:00:00.010 connection(0x2) mtproxy_startup probe_join key=fast2.mtproxy.zip:443:secret_hash=1111111111111111:xapi.ozon.ru endpoint=fast2.mtproxy.zip:443:ee:xapi.ozon.ru owner_generation=1",
-            "06-30 14:00:00.020 proxy_control decision=telemetry_only source=native_stage origin=active_proxy account=1 phase=mtproxy_probe_wait endpoint=fast2.mtproxy.zip:443:ee:xapi.ozon.ru probe=fast2.mtproxy.zip:443:secret_hash=1111111111111111:xapi.ozon.ru",
+            "06-30 14:00:00.020 proxy_control decision=telemetry_only source=native_stage origin=active_socket account=1 phase=mtproxy_probe_wait endpoint=fast2.mtproxy.zip:443:ee:xapi.ozon.ru probe=fast2.mtproxy.zip:443:secret_hash=1111111111111111:xapi.ozon.ru",
             "06-30 14:00:00.030 connection(0x1) mtproxy_startup client_hello_sent bytes=512 expected=512 domain_len=13",
             "06-30 14:00:00.040 connection(0x1) mtproxy_startup recipe_failed key=fast2.mtproxy.zip:443:ee:xapi.ozon.ru recipe_key=fast2.mtproxy.zip:443:secret_hash=1111111111111111:xapi.ozon.ru phase=faketls_server_hello_wait_timeout evidence=no_bytes_after_client_hello response_bytes=0 next=legacy_no_grease",
         )
@@ -91,7 +91,7 @@ def verify_runtime_contract(failures: list[str]) -> None:
     good_exhaustion = run_verifier(
         base_log(
             "06-30 14:02:00.000 connection(0x1) mtproxy_startup recipe_exhausted key=fast2.mtproxy.zip:443:ee:xapi.ozon.ru recipe_key=fast2.mtproxy.zip:443:secret_hash=1111111111111111:xapi.ozon.ru failed_phase=faketls_server_hello_wait_timeout evidence=no_bytes_after_client_hello response_bytes=0 next=handshake_profiles_exhausted generation=3",
-            "06-30 14:02:00.010 proxy_control decision=held_by_failure_hysteresis source=native_stage origin=active_proxy account=0 phase=handshake_profiles_exhausted endpoint=fast2.mtproxy.zip:443:ee:xapi.ozon.ru failures=1",
+            "06-30 14:02:00.010 proxy_control decision=held_by_failure_hysteresis source=native_stage origin=active_socket account=0 phase=handshake_profiles_exhausted endpoint=fast2.mtproxy.zip:443:ee:xapi.ozon.ru failures=1",
         )
     )
     require(

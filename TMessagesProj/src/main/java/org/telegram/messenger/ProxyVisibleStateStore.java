@@ -6,12 +6,16 @@ import org.telegram.tgnet.ConnectionsManager;
 
 final class ProxyVisibleStateStore {
     static final long DNS_VISIBLE_DELAY_MS = 800L;
+    static final long PROBE_WAIT_VISIBLE_REPEAT_MS = 5 * 1000L;
 
     private static long pendingDnsVisibleGeneration;
     private static String pendingDnsVisibleEndpointKey = "";
     private static String pendingDnsVisiblePhase = "";
     private static int pendingDnsVisibleAccount = -1;
     private static long pendingDnsVisibleStartedAtMs;
+    private static String lastVisibleProbeWaitEndpointKey = "";
+    private static String lastVisibleProbeWaitProbeKey = "";
+    private static long lastVisibleProbeWaitAtMs;
 
     private ProxyVisibleStateStore() {
     }
@@ -111,14 +115,44 @@ final class ProxyVisibleStateStore {
     }
 
     static boolean mirrorVisiblePhaseIfAllowed(SharedConfig.ProxyInfo proxyInfo, ProxyConnectionEvent event) {
+        return mirrorVisiblePhaseIfAllowed(proxyInfo, event, event == null ? null : event.phase);
+    }
+
+    static boolean mirrorVisiblePhaseIfAllowed(SharedConfig.ProxyInfo proxyInfo, ProxyConnectionEvent event, String visiblePhase) {
         if (proxyInfo == null || event == null) {
             return false;
         }
         if (shouldHoldVisiblePhaseByFreshFailure(proxyInfo, event)) {
             return false;
         }
-        ProxyStatusMirror.mirrorVisiblePhase(proxyInfo, event.phase, event.timestamp);
+        ProxyStatusMirror.mirrorVisiblePhase(proxyInfo, visiblePhase, event.timestamp);
         return true;
+    }
+
+    static boolean shouldCoalesceProbeWait(SharedConfig.ProxyInfo proxyInfo, ProxyConnectionEvent event) {
+        if (proxyInfo == null || event == null || !ProxyCheckDiagnostics.MTPROXY_PROBE_WAIT.equals(ProxyCheckDiagnostics.normalize(event.phase))) {
+            return false;
+        }
+        String endpointKey = event.endpointKey == null ? "" : event.endpointKey;
+        if (endpointKey.length() == 0) {
+            return false;
+        }
+        String probeKey = event.probeKey == null ? "" : event.probeKey;
+        boolean sameProbe = ProxyEndpointKey.sameTelemetryEndpointKey(lastVisibleProbeWaitEndpointKey, endpointKey)
+                && probeKey.equals(lastVisibleProbeWaitProbeKey);
+        if (sameProbe && event.timestamp - lastVisibleProbeWaitAtMs < PROBE_WAIT_VISIBLE_REPEAT_MS) {
+            return true;
+        }
+        lastVisibleProbeWaitEndpointKey = endpointKey;
+        lastVisibleProbeWaitProbeKey = probeKey;
+        lastVisibleProbeWaitAtMs = event.timestamp;
+        return false;
+    }
+
+    static void resetProbeWaitCoalescing() {
+        lastVisibleProbeWaitEndpointKey = "";
+        lastVisibleProbeWaitProbeKey = "";
+        lastVisibleProbeWaitAtMs = 0;
     }
 
     static boolean shouldHoldVisiblePhaseByFreshFailure(SharedConfig.ProxyInfo proxyInfo, ProxyConnectionEvent event) {
@@ -157,13 +191,27 @@ final class ProxyVisibleStateStore {
         return !preserveFreshProxyPhase;
     }
 
-    static void markConnectionStarting(SharedConfig.ProxyInfo proxyInfo, long now) {
+    static void markConnectionStarting(SharedConfig.ProxyInfo proxyInfo, long now, ProxyConnectionEvent.Origin origin) {
         if (proxyInfo == null) {
             return;
         }
         clearPendingDnsVisiblePhase(ProxyEndpointKey.liveStage(proxyInfo), now);
+        boolean forceVisibleActivation = origin == ProxyConnectionEvent.Origin.USER_SELECT
+                || origin == ProxyConnectionEvent.Origin.SETTINGS_CHANGE
+                || origin == ProxyConnectionEvent.Origin.STARTUP_RESTORE;
+        if (forceVisibleActivation) {
+            resetProbeWaitCoalescing();
+            ProxyHealthStore.clearUsableSuccessHold(proxyInfo, now, origin.wireName);
+            ProxyStatusMirror.markConnectionStarting(proxyInfo, now);
+            ProxyRuntimeStateStore.logControl("decision=visible_only source=" + ProxyConnectionEvent.SOURCE_CONNECT_START + " origin=" + origin.wireName + " phase=" + ProxyCheckDiagnostics.CONNECT_START + " endpoint=" + ProxyEndpointKey.liveStage(proxyInfo));
+            return;
+        }
         if (ProxyHealthStore.isEndpointRotatedAway(proxyInfo, now)) {
             ProxyRuntimeStateStore.logControl("decision=ignored_rotated_away source=" + ProxyConnectionEvent.SOURCE_CONNECT_START + " phase=" + ProxyCheckDiagnostics.CONNECT_START + " endpoint=" + ProxyEndpointKey.liveStage(proxyInfo));
+            return;
+        }
+        if (ProxyCheckDiagnostics.shouldKeepFreshFailure(proxyInfo, ProxyCheckDiagnostics.CONNECT_START)) {
+            ProxyRuntimeStateStore.logControl("decision=held_by_fresh_failure source=" + ProxyConnectionEvent.SOURCE_CONNECT_START + " origin=" + origin.wireName + " phase=" + ProxyCheckDiagnostics.CONNECT_START + " endpoint=" + ProxyEndpointKey.liveStage(proxyInfo) + " held_by=" + ProxyStatusMirror.diagnostic(proxyInfo));
             return;
         }
         if (ProxyHealthStore.hasFreshUsableSuccess(proxyInfo, now)) {
@@ -175,7 +223,7 @@ final class ProxyVisibleStateStore {
             return;
         }
         ProxyStatusMirror.markConnectionStarting(proxyInfo, now);
-        ProxyRuntimeStateStore.logControl("decision=visible_only source=" + ProxyConnectionEvent.SOURCE_CONNECT_START + " phase=" + ProxyCheckDiagnostics.CONNECT_START + " endpoint=" + ProxyEndpointKey.liveStage(proxyInfo));
+        ProxyRuntimeStateStore.logControl("decision=visible_only source=" + ProxyConnectionEvent.SOURCE_CONNECT_START + " origin=" + origin.wireName + " phase=" + ProxyCheckDiagnostics.CONNECT_START + " endpoint=" + ProxyEndpointKey.liveStage(proxyInfo));
     }
 
     static boolean markConnectionUsable(SharedConfig.ProxyInfo proxyInfo, String diagnostic, long now) {
@@ -217,8 +265,8 @@ final class ProxyVisibleStateStore {
         ProxyStatusMirror.mirrorVisiblePhase(currentProxy, phase, now);
         ProxyRuntimeStateStore.logControl("decision=visible_delayed_dns source=" + ProxyConnectionEvent.SOURCE_NATIVE_STAGE + " account=" + account + " phase=" + phase + " endpoint=" + endpointKey + " delay_ms=" + (now - startedAtMs));
         clearPendingDnsVisiblePhase(endpointKey, now);
-        NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.proxyConnectionStageChanged, phase, endpointKey, ProxyConnectionEvent.Origin.ACTIVE_PROXY.wireName);
-        AccountInstance.getInstance(account).getNotificationCenter().postNotificationName(NotificationCenter.proxyConnectionStageChanged, phase, endpointKey, ProxyConnectionEvent.Origin.ACTIVE_PROXY.wireName);
+        NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.proxyConnectionStageChanged, phase, endpointKey, ProxyConnectionEvent.Origin.ACTIVE_SOCKET.wireName);
+        AccountInstance.getInstance(account).getNotificationCenter().postNotificationName(NotificationCenter.proxyConnectionStageChanged, phase, endpointKey, ProxyConnectionEvent.Origin.ACTIVE_SOCKET.wireName);
     }
 
     private static boolean isMtProxy(SharedConfig.ProxyInfo proxyInfo) {

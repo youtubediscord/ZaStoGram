@@ -11099,6 +11099,18 @@ public class MessageObject {
         return isRoundVideo() && messageOwner != null && messageOwner.media != null && messageOwner.media.ttl_seconds == 0x7FFFFFFF;
     }
 
+    public boolean shouldOpenRoundVideoAsRegularMedia() {
+        return SharedConfig.roundVideosAsRegularMedia && isRoundVideo() && !isRoundOnce();
+    }
+
+    public boolean shouldDisplayRoundVideoInline() {
+        return isRoundVideo() && !shouldOpenRoundVideoAsRegularMedia();
+    }
+
+    public boolean isVideoOrRoundVideoAsRegularMedia() {
+        return isVideo() || shouldOpenRoundVideoAsRegularMedia();
+    }
+
     public boolean isVideo() {
         return isVideoMessage(messageOwner);
     }

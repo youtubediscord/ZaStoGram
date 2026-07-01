@@ -270,8 +270,8 @@ def main() -> int:
         "Java must choose a sticky profile from endpoint, secret, and local salt",
     )
     require(
-        "native_setProxySettings(currentAccount, proxyAddress, proxyPort, proxyUsername, proxyPassword, proxySecret, MtProxyOptions.resolve(proxyAddress, proxyPort, proxySecret))" in java
-        and "native_setProxySettings(a, address, port, username, password, secret, enabledOptions)" in java,
+        "native_setProxySettings(currentAccount, proxyAddress, proxyPort, proxyUsername, proxyPassword, proxySecret, MtProxyOptions.resolve(proxyAddress, proxyPort, proxySecret), activationGeneration, ProxyConnectionEvent.Origin.STARTUP_RESTORE.wireName)" in java
+        and "native_setProxySettings(a, address, port, username, password, secret, enabledOptions, activationGeneration, activationOrigin.wireName)" in java,
         "Java must pass resolved MTProxy options into native proxy settings",
     )
     require(
@@ -279,11 +279,11 @@ def main() -> int:
         "Java proxy checks must use the same resolved MTProxy options as real connections",
     )
     require(
-        "native_setProxySettings(int currentAccount, String address, int port, String username, String password, String secret, MtProxyOptions options)" in java,
+        "native_setProxySettings(int currentAccount, String address, int port, String username, String password, String secret, MtProxyOptions options, int activationGeneration, String activationOrigin)" in java,
         "Java native_setProxySettings declaration must take MtProxyOptions",
     )
     require(
-        'native_setProxySettings", "(ILjava/lang/String;ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Lorg/telegram/tgnet/MtProxyOptions;)V"' in wrapper,
+        'native_setProxySettings", "(ILjava/lang/String;ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Lorg/telegram/tgnet/MtProxyOptions;ILjava/lang/String;)V"' in wrapper,
         "JNI native_setProxySettings signature must take MtProxyOptions",
     )
     require(
@@ -291,8 +291,8 @@ def main() -> int:
         "JNI native_checkProxy signature must take MtProxyOptions",
     )
     require(
-        "setProxySettings(std::string address, uint16_t port, std::string username, std::string password, std::string secret, const MtProxyOptions &options)" in manager_header
-        and "ConnectionsManager::setProxySettings(std::string address, uint16_t port, std::string username, std::string password, std::string secret, const MtProxyOptions &options)" in manager_cpp,
+        "setProxySettings(std::string address, uint16_t port, std::string username, std::string password, std::string secret, const MtProxyOptions &options, uint32_t activationGeneration, std::string activationOrigin)" in manager_header
+        and "ConnectionsManager::setProxySettings(std::string address, uint16_t port, std::string username, std::string password, std::string secret, const MtProxyOptions &options, uint32_t activationGeneration, std::string activationOrigin)" in manager_cpp,
         "ConnectionsManager::setProxySettings must store MtProxyOptions",
     )
     require(

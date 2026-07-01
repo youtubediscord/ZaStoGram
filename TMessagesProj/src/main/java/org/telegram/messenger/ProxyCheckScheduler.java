@@ -190,6 +190,10 @@ public class ProxyCheckScheduler {
         ProxyRuntimeStateStore.markConnectionStarting(proxyInfo);
     }
 
+    public static void markConnectionStarting(SharedConfig.ProxyInfo proxyInfo, ProxyConnectionEvent.Origin origin) {
+        ProxyRuntimeStateStore.markConnectionStarting(proxyInfo, origin);
+    }
+
     public static void markConnectionUsable(SharedConfig.ProxyInfo proxyInfo, String diagnostic) {
         ProxyRuntimeStateStore.markConnectionUsable(proxyInfo, diagnostic);
     }

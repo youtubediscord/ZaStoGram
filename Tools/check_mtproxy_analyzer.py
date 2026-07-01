@@ -975,7 +975,7 @@ def main():
 
     bad_terminal_exhaustion = run_verifier(
         runtime_contract_log(
-            "06-30 13:20:41.000 proxy_control decision=terminal_quarantine source=native_stage origin=active_proxy account=0 phase=handshake_profiles_exhausted evidence=no_bytes_after_client_hello endpoint=fast2.mtproxy.zip:443:ee:wb.ru probe=fast2.mtproxy.zip:443:secret_hash=1111111111111111:wb.ru",
+            "06-30 13:20:41.000 proxy_control decision=terminal_quarantine source=native_stage origin=active_socket account=0 phase=handshake_profiles_exhausted failure_class=faketls_bad_server_flight endpoint=fast2.mtproxy.zip:443:ee:wb.ru probe=fast2.mtproxy.zip:443:secret_hash=1111111111111111:wb.ru",
         )
     )
     require(

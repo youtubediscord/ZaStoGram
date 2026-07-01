@@ -838,7 +838,8 @@ public class ConnectionsManager extends BaseController {
         int proxyPort = preferences.getInt("proxy_port", 1080);
 
         if (preferences.getBoolean("proxy_enabled", false) && !TextUtils.isEmpty(proxyAddress)) {
-            native_setProxySettings(currentAccount, proxyAddress, proxyPort, proxyUsername, proxyPassword, proxySecret, MtProxyOptions.resolve(proxyAddress, proxyPort, proxySecret));
+            int activationGeneration = ProxyRuntimeStateStore.noteProxyStartupRestoreActivation(currentAccount);
+            native_setProxySettings(currentAccount, proxyAddress, proxyPort, proxyUsername, proxyPassword, proxySecret, MtProxyOptions.resolve(proxyAddress, proxyPort, proxySecret), activationGeneration, ProxyConnectionEvent.Origin.STARTUP_RESTORE.wireName);
         }
         setWssTransportSettings();
         String installer = "";
@@ -941,7 +942,17 @@ public class ConnectionsManager extends BaseController {
     }
 
     public void resumeNetworkMaybe() {
+        publishProxyActivationContext(ProxyConnectionEvent.Origin.BACKGROUND_KEEPALIVE);
         native_resumeNetwork(currentAccount, true);
+    }
+
+    private void publishProxyActivationContext(ProxyConnectionEvent.Origin origin) {
+        if (!SharedConfig.isProxyEnabled()) {
+            return;
+        }
+        ProxyConnectionEvent.Origin activationOrigin = origin == null ? ProxyConnectionEvent.Origin.ACTIVE_SOCKET : origin;
+        int activationGeneration = ProxyRuntimeStateStore.noteProxyLifecycleActivation(currentAccount, activationOrigin);
+        native_setProxyActivationContext(currentAccount, activationGeneration, activationOrigin.wireName);
     }
 
     public void updateDcSettings() {
@@ -1034,6 +1045,7 @@ public class ConnectionsManager extends BaseController {
                 getContactsController().checkContacts();
             }
             lastPauseTime = 0;
+            publishProxyActivationContext(ProxyConnectionEvent.Origin.ACTIVE_SOCKET);
             native_resumeNetwork(currentAccount, false);
         }
     }
@@ -1044,6 +1056,7 @@ public class ConnectionsManager extends BaseController {
         }
         if (isBackgroundNetworkAlwaysOn()) {
             lastPauseTime = 0;
+            publishProxyActivationContext(ProxyConnectionEvent.Origin.BACKGROUND_KEEPALIVE);
             native_resumeNetwork(currentAccount, false);
             return;
         }
@@ -1099,7 +1112,7 @@ public class ConnectionsManager extends BaseController {
     }
 
     public static void onProxyConnectionStageChanged(final int currentAccount, final String diagnostic, final String endpointKey) {
-        onProxyConnectionStageChanged(currentAccount, diagnostic, endpointKey, ProxyConnectionEvent.Origin.ACTIVE_PROXY.wireName);
+        onProxyConnectionStageChanged(currentAccount, diagnostic, endpointKey, ProxyConnectionEvent.Origin.ACTIVE_SOCKET.wireName);
     }
 
     public static void onProxyConnectionStageChanged(final int currentAccount, final String diagnostic, final String endpointKey, final String origin) {
@@ -1111,23 +1124,34 @@ public class ConnectionsManager extends BaseController {
     private static final java.util.HashMap<Integer, String> lastLoggedProxyStage = new java.util.HashMap<>();
 
     public static void onProxyConnectionStageChanged(final int currentAccount, final String diagnostic, final String endpointKey, final String probeKey, final String origin) {
+        onProxyConnectionStageChanged(currentAccount, diagnostic, endpointKey, probeKey, origin, 0);
+    }
+
+    public static void onProxyConnectionStageChanged(final int currentAccount, final String diagnostic, final String endpointKey, final String probeKey, final String origin, final int activationGeneration) {
         AndroidUtilities.runOnUIThread(() -> {
-            ProxyConnectionEvent event = ProxyConnectionEvent.nativeStage(currentAccount, diagnostic, endpointKey, probeKey, origin);
-            ProxyRuntimeStateStore.onNativeStage(event);
+            ProxyConnectionEvent event = ProxyConnectionEvent.nativeStage(currentAccount, diagnostic, endpointKey, probeKey, origin, activationGeneration);
+            ProxyRuntimeStateStore.Decision decision = ProxyRuntimeStateStore.onNativeStage(event);
             String normalizedDiagnostic = event.phase;
+            if (!shouldNotifyProxyConnectionStage(decision)) {
+                return;
+            }
             if (BuildVars.LOGS_ENABLED) {
                 // The native side fires this callback on every transport state change (thousands/sec
                 // during a reconnect storm); logging each one was the bulk of the main-log spam. Only
                 // distinct transitions carry diagnostic value, so log on change of (phase, endpoint, probe).
-                String stageKey = normalizedDiagnostic + "|" + endpointKey + "|" + event.origin.wireName + "|" + event.probeKey;
+                String stageKey = normalizedDiagnostic + "|" + endpointKey + "|" + event.origin.wireName + "|" + event.probeKey + "|" + event.activationGeneration;
                 if (!stageKey.equals(lastLoggedProxyStage.get(currentAccount))) {
                     lastLoggedProxyStage.put(currentAccount, stageKey);
-                    FileLog.d("proxy_connection_stage account=" + currentAccount + " origin=" + event.origin.wireName + " phase=" + normalizedDiagnostic + " endpoint=" + endpointKey + " probe=" + event.probeKey);
+                    FileLog.d("proxy_connection_stage account=" + currentAccount + " origin=" + event.origin.wireName + " phase=" + normalizedDiagnostic + " endpoint=" + endpointKey + " probe=" + event.probeKey + " activation_generation=" + event.activationGeneration);
                 }
             }
             NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.proxyConnectionStageChanged, normalizedDiagnostic, endpointKey, event.origin.wireName);
             AccountInstance.getInstance(currentAccount).getNotificationCenter().postNotificationName(NotificationCenter.proxyConnectionStageChanged, normalizedDiagnostic, endpointKey, event.origin.wireName);
         });
+    }
+
+    private static boolean shouldNotifyProxyConnectionStage(ProxyRuntimeStateStore.Decision decision) {
+        return decision != null && (decision.visibleChanged || decision.rotationTrigger);
     }
 
     public static void onLogout(final int currentAccount) {
@@ -1343,6 +1367,10 @@ public class ConnectionsManager extends BaseController {
     }
 
     public static void setProxySettings(boolean enabled, String address, int port, String username, String password, String secret) {
+        setProxySettings(enabled, address, port, username, password, secret, ProxyConnectionEvent.Origin.SETTINGS_CHANGE);
+    }
+
+    public static void setProxySettings(boolean enabled, String address, int port, String username, String password, String secret, ProxyConnectionEvent.Origin origin) {
         if (address == null) {
             address = "";
         }
@@ -1356,12 +1384,14 @@ public class ConnectionsManager extends BaseController {
             secret = "";
         }
 
+        ProxyConnectionEvent.Origin activationOrigin = origin == null ? ProxyConnectionEvent.Origin.SETTINGS_CHANGE : origin;
+        int activationGeneration = ProxyRuntimeStateStore.noteProxySettingsActivation(activationOrigin);
         MtProxyOptions enabledOptions = enabled && !TextUtils.isEmpty(address) ? MtProxyOptions.resolve(address, port, secret) : MtProxyOptions.disabled();
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
             if (enabled && !TextUtils.isEmpty(address)) {
-                native_setProxySettings(a, address, port, username, password, secret, enabledOptions);
+                native_setProxySettings(a, address, port, username, password, secret, enabledOptions, activationGeneration, activationOrigin.wireName);
             } else {
-                native_setProxySettings(a, "", 1080, "", "", "", MtProxyOptions.disabled());
+                native_setProxySettings(a, "", 1080, "", "", "", MtProxyOptions.disabled(), activationGeneration, activationOrigin.wireName);
             }
             AccountInstance accountInstance = AccountInstance.getInstance(a);
             if (accountInstance.getUserConfig().isClientActivated()) {
@@ -1548,6 +1578,7 @@ public class ConnectionsManager extends BaseController {
     public static native void native_moveDatacenter(int currentAccount, int datacenterId);
     public static native void native_setNetworkAvailable(int currentAccount, boolean value, int networkType, boolean slow);
     public static native void native_resumeNetwork(int currentAccount, boolean partial);
+    public static native void native_setProxyActivationContext(int currentAccount, int activationGeneration, String activationOrigin);
     public static native long native_getCurrentTimeMillis(int currentAccount);
     public static native int native_getCurrentTime(int currentAccount);
     public static native int native_getCurrentPingTime(int currentAccount);
@@ -1563,7 +1594,7 @@ public class ConnectionsManager extends BaseController {
     public static native int native_getConnectionState(int currentAccount);
     public static native void native_setUserId(int currentAccount, long id);
     public static native void native_init(int currentAccount, int version, int layer, int apiId, String deviceModel, String systemVersion, String appVersion, String langCode, String systemLangCode, String configPath, String logPath, String regId, String cFingerprint, String installer, String packageId, int timezoneOffset, long userId, boolean userPremium, boolean enablePushConnection, boolean hasNetwork, int networkType, int performanceClass);
-    public static native void native_setProxySettings(int currentAccount, String address, int port, String username, String password, String secret, MtProxyOptions options);
+    public static native void native_setProxySettings(int currentAccount, String address, int port, String username, String password, String secret, MtProxyOptions options, int activationGeneration, String activationOrigin);
     public static native void native_setWssTransportSettings(int currentAccount, int mode, int gatewayMode, String host, int port, String path, boolean miniApps, String socksHost, int socksPort, String socksUsername, String socksPassword, boolean socksEnabled, boolean enabled);
     public static native void native_setLangCode(int currentAccount, String langCode);
     public static native void native_setRegId(int currentAccount, String regId);

@@ -29,6 +29,7 @@ DISCONNECT_REQUIRED_FIELDS = (
 )
 ALLOWED_DATA_PATH_REASONS = {"first_tls_app_recv", "first_mtproxy_packet_recv"}
 FAILURE_EVIDENCE_CLASSES = evidence_classes()
+ACTIVE_SOCKET_ORIGINS = {"active_socket", "active_proxy"}
 RECIPE_FAILURE_MARKERS = ("mtproxy_startup recipe_failed", "mtproxy_startup recipe_exhausted")
 USABLE_SUCCESS_PROXY_PHASES = {"first_tls_app_recv", "first_mtproxy_packet_recv"}
 NATIVE_SOCKET_OBSERVATION_FACADE_PHASES = {
@@ -63,6 +64,8 @@ LIVE_VISIBLE_OVERWRITE_PHASES = {
 }
 FRESH_USABLE_FAILURE_OVERWRITE_PHASES = {
     "tcp_not_connected",
+    "tcp_connection_refused",
+    "tcp_connect_timeout",
     "host_resolve_failed",
     "host_resolve_timeout",
     "dns_blocked_zero_address",
@@ -106,6 +109,8 @@ TERMINAL_ONE_SHOT_PHASES = {
 }
 PUNITIVE_ROTATION_PHASES = {
     "tcp_not_connected",
+    "tcp_connection_refused",
+    "tcp_connect_timeout",
     "host_resolve_failed",
     "host_resolve_timeout",
     "tcp_connected_no_pong",
@@ -113,6 +118,11 @@ PUNITIVE_ROTATION_PHASES = {
     "mtproxy_packet_sent_no_response",
     "post_handshake_no_appdata",
     "dropped_early_after_appdata",
+}
+PRE_SOCKET_TCP_FAILURE_PHASES = {
+    "tcp_not_connected",
+    "tcp_connection_refused",
+    "tcp_connect_timeout",
 }
 ROTATION_HYSTERESIS_WINDOW_MS = 30 * 1000
 ROTATION_FAILURES_TO_TRIGGER = 2
@@ -289,7 +299,7 @@ def verify_visible_success_hold(lines: list[str]) -> list[str]:
         phase = line_field(line, "phase")
         endpoint = line_field(line, "endpoint")
         origin = line_field(line, "origin")
-        if decision in {"visible_usable_success", "visible_only"} and origin and origin != "active_proxy":
+        if decision in {"visible_usable_success", "visible_only"} and origin and origin not in ACTIVE_SOCKET_ORIGINS:
             failures.append(f"non-active origin mirrored as active visible status: {line}")
             continue
         if decision == "visible_usable_success" and phase in USABLE_SUCCESS_PROXY_PHASES:
@@ -486,7 +496,7 @@ def verify_rotation_hysteresis(lines: list[str]) -> list[str]:
             continue
         if "proxy_rotation decision=trigger" in line:
             origin = line_field(line, "origin")
-            if origin and origin != "active_proxy":
+            if origin and origin not in ACTIVE_SOCKET_ORIGINS:
                 failures.append(f"proxy_rotation trigger from non-active origin: {line}")
         if "proxy_rotation decision=trigger_terminal_exact" in line:
             phase = line_field(line, "phase")
@@ -752,10 +762,10 @@ def verify_stage2_runtime_rules(lines: list[str]) -> list[str]:
             if parser_variant and parser_variant != STANDARD_HMAC_PARSER:
                 failures.append(f"post_handshake_no_appdata must not enter parser recipe cross-product: {line}")
 
-        if connection and phase == "tcp_not_connected" and (
+        if connection and phase in PRE_SOCKET_TCP_FAILURE_PHASES and (
             "mtproxy_startup close_diagnostic" in line or "mtproxy_startup endpoint_failure" in line
         ) and connection not in socket_connect_seen:
-            failures.append(f"tcp_not_connected published before socket_connect_start: {line}")
+            failures.append(f"{phase} published before socket_connect_start: {line}")
 
         if endpoint and (
             "first_tls_app_recv" in line

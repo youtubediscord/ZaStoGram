@@ -79,6 +79,8 @@ FAKETLS_FAILURE_VERDICTS = {
     "tcp_budget_stolen_by_pre_tcp_wait",
     "dns_budget_stolen_by_pre_tcp_wait",
     "tcp_not_connected",
+    "tcp_connection_refused",
+    "tcp_connect_timeout",
     "tcp_connected_no_pong",
     "secret_parse_invalid_domain_control_char",
     "secret_parse_invalid_domain",
@@ -380,6 +382,8 @@ class Attempt:
             "dns_coalesce_timeout": "dns_coalesce_timeout",
             "tcp_connect_gate_timeout": "tcp_connect_gate_timeout",
             "tcp_not_connected": "tcp_not_connected",
+            "tcp_connection_refused": "tcp_connection_refused",
+            "tcp_connect_timeout": "tcp_connect_timeout",
             "tcp_connected_no_pong": "tcp_connected_no_pong",
             "secret_domain_sanitized": "secret_domain_sanitized",
             "secret_parse_invalid_domain_control_char": "secret_parse_invalid_domain_control_char",
@@ -540,6 +544,10 @@ class Attempt:
         if not has("socket_connected"):
             if self.has_stolen_tcp_budget():
                 return "tcp_budget_stolen_by_pre_tcp_wait"
+            if has("tcp_connection_refused"):
+                return "tcp_connection_refused"
+            if has("tcp_connect_timeout"):
+                return "tcp_connect_timeout"
             return "tcp_not_connected"
         if has("tcp_connected_no_pong"):
             return "tcp_connected_no_pong"

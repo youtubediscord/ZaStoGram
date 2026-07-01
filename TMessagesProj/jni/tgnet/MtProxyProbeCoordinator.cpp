@@ -382,7 +382,9 @@ void MtProxyProbeCoordinator::reapExpired(int64_t now) {
 }
 
 bool MtProxyProbeCoordinator::failureNeedsRecipe(const std::string &diagnostic) {
-    if (diagnostic == "tcp_not_connected") {
+    if (diagnostic == "tcp_not_connected"
+            || diagnostic == "tcp_connection_refused"
+            || diagnostic == "tcp_connect_timeout") {
         return false;
     }
     bool recipePhase = diagnostic == "true_client_hello_timeout"

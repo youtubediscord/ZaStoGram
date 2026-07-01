@@ -97,7 +97,6 @@ def native_diagnostics(socket: str, socket_h: str, startup_timeline: str, connec
         "dns_coalesce",
         "tcp_connect",
         "pre_tcp_timeout",
-        "tcp_connect_timeout",
     }
     return phases
 
@@ -194,6 +193,8 @@ def main() -> int:
         "host_resolve_failed": "dns_failure",
         "host_resolve_timeout": "dns_failure",
         "tcp_not_connected": "tcp_failure",
+        "tcp_connection_refused": "tcp_failure",
+        "tcp_connect_timeout": "tcp_failure",
         "faketls_server_hello_wait_timeout": "no_bytes_after_client_hello",
         "tls_alert_after_client_hello": "server_bytes_parser_failure",
         "short_tls_response_after_client_hello": "server_bytes_parser_failure",

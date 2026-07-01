@@ -608,7 +608,9 @@ MtProxyAdaptivePolicy::RotateResult MtProxyAdaptivePolicy::rotateTlsProfileOnFai
 }
 
 bool MtProxyAdaptivePolicy::failureNeedsRecipe(const std::string &diagnostic) {
-    if (diagnostic == "tcp_not_connected") {
+    if (diagnostic == "tcp_not_connected"
+            || diagnostic == "tcp_connection_refused"
+            || diagnostic == "tcp_connect_timeout") {
         return false; // ClientHello was not sent, so JA4 did not cause this failure.
     }
     bool recipePhase = diagnostic == "true_client_hello_timeout"

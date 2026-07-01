@@ -181,7 +181,7 @@ def main() -> int:
 
     delay_idx = on_native_stage.find("ProxyVisibleStateStore.shouldDelayDnsVisiblePhase(event.phase)")
     dns_connection_hold_idx = on_native_stage.find("shouldKeepConnectionNotStartedTelemetryOnlyByDnsOutage(currentProxy, event.phase, event.timestamp)")
-    visible_write_idx = on_native_stage.find("if (selectedAccountStage && ProxyPhasePolicy.canOverwriteVisible(event.phase))")
+    visible_write_idx = on_native_stage.find("if (selectedAccountStage && verdict.canOverwriteVisible)")
     require(
         delay_idx >= 0
         and visible_write_idx >= 0

@@ -164,12 +164,16 @@ def main() -> None:
     require(
         'phase == "host_resolve_failed"' in endpoint_key
         and has_phase(endpoint_key, "tcp_not_connected", phase_constants)
+        and has_phase(endpoint_key, "tcp_connection_refused", phase_constants)
+        and has_phase(endpoint_key, "tcp_connect_timeout", phase_constants)
         and "networkEndpointKey" in endpoint_key,
-        "host_resolve_failed and tcp_not_connected must use the host:port network key",
+        "host_resolve_failed and TCP connect failures must use the host:port network key",
     )
     require(
         '"host_resolve_failed"' not in recipe
         and has_phase(recipe, "tcp_not_connected", phase_constants)
+        and has_phase(recipe, "tcp_connection_refused", phase_constants)
+        and has_phase(recipe, "tcp_connect_timeout", phase_constants)
         and "return false;" in recipe,
         "pre-TLS DNS/TCP failures must not change JA4/profile/ClientHello recipe",
     )
@@ -182,6 +186,8 @@ def main() -> None:
     )
     require(
         has_phase(cooldown, "tcp_not_connected", phase_constants)
+        and has_phase(cooldown, "tcp_connection_refused", phase_constants)
+        and has_phase(cooldown, "tcp_connect_timeout", phase_constants)
         and '"mtproxy_packet_sent_no_response"' in cooldown
         and "plainNoResponseFailures" in cooldown,
         "tcp failures and dd/plain no-response must feed endpoint cooldown",

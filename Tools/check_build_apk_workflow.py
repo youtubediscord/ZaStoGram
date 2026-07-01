@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GRADLE_PATH = ROOT / "TMessagesProj_AppStandalone" / "build.gradle"
+LIB_GRADLE_PATH = ROOT / "TMessagesProj" / "build.gradle"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "build-apk.yml"
 
 
@@ -121,6 +122,31 @@ def check_gradle(gradle_text: str) -> list[str]:
     return errors
 
 
+def check_library_gradle(gradle_text: str) -> list[str]:
+    errors: list[str] = []
+
+    required_literals = [
+        "zastoAbiFilter",
+        "zastoAllNativeAbis",
+        'project.findProperty("zastoAbiFilter")',
+        'System.getenv("ZASTO_ABI_FILTER")',
+        "abiFilters(*(zastoRequestedAbiFilter ? [zastoRequestedAbiFilter] : zastoAllNativeAbis))",
+    ]
+    for literal in required_literals:
+        if literal not in gradle_text:
+            errors.append(f"Library Gradle file is missing ABI-cache contract literal: {literal}")
+
+    for abi in ("armeabi-v7a", "arm64-v8a", "x86", "x86_64"):
+        if f'"{abi}"' not in gradle_text:
+            errors.append(f"Library Gradle ABI allow-list is missing {abi}")
+
+    all_abi_filter = 'abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64"'
+    if all_abi_filter in gradle_text:
+        errors.append("Library Gradle file must not force all native ABIs for every matrix job")
+
+    return errors
+
+
 def check_workflow(workflow_text: str) -> list[str]:
     errors: list[str] = []
 
@@ -137,6 +163,7 @@ def check_workflow(workflow_text: str) -> list[str]:
         "python3 Tools/check_android_string_format_contract.py",
         "python3 Tools/check_logs_activity_compile_contract.py",
         "python3 Tools/check_zasto_edit_history_contract.py",
+        "-PzastoAbiFilter=${{ matrix.abi }}",
         "release:",
         "needs: build",
         "actions/download-artifact@v4",
@@ -181,6 +208,7 @@ def check_workflow(workflow_text: str) -> list[str]:
 def main() -> int:
     errors = []
     errors.extend(check_gradle(read_text(GRADLE_PATH)))
+    errors.extend(check_library_gradle(read_text(LIB_GRADLE_PATH)))
     errors.extend(check_workflow(read_text(WORKFLOW_PATH)))
 
     if errors:

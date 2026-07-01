@@ -47,6 +47,7 @@ import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.NotificationCenter;
+import org.telegram.messenger.ProxyConnectionEvent;
 import org.telegram.messenger.ProxyCheckScheduler;
 import org.telegram.messenger.R;
 import org.telegram.messenger.SharedConfig;
@@ -309,7 +310,7 @@ public class ProxySettingsActivity extends BaseFragment {
                         editor.putBoolean("proxy_enabled_calls", false);
                         editor.commit();
                         SharedConfig.saveWssSocksProxy(currentProxyInfo);
-                        ConnectionsManager.setProxySettings(false, "", 1080, "", "", "");
+                        ConnectionsManager.setProxySettings(false, "", 1080, "", "", "", ProxyConnectionEvent.Origin.SETTINGS_CHANGE);
                         ConnectionsManager.setWssTransportSettings();
                         NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.proxySettingsChanged);
                         finishFragment();
@@ -332,9 +333,9 @@ public class ProxySettingsActivity extends BaseFragment {
                         editor.putInt("proxy_port", currentProxyInfo.port);
                         editor.putString("proxy_secret", currentProxyInfo.secret);
                         if (enabled) {
-                            ProxyCheckScheduler.markConnectionStarting(currentProxyInfo);
+                            ProxyCheckScheduler.markConnectionStarting(currentProxyInfo, ProxyConnectionEvent.Origin.SETTINGS_CHANGE);
                         }
-                        ConnectionsManager.setProxySettings(enabled, currentProxyInfo.address, currentProxyInfo.port, currentProxyInfo.username, currentProxyInfo.password, currentProxyInfo.secret);
+                        ConnectionsManager.setProxySettings(enabled, currentProxyInfo.address, currentProxyInfo.port, currentProxyInfo.username, currentProxyInfo.password, currentProxyInfo.secret, ProxyConnectionEvent.Origin.SETTINGS_CHANGE);
                     }
                     editor.commit();
 

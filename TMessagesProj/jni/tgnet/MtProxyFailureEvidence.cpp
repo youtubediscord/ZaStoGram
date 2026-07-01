@@ -21,6 +21,8 @@ MtProxyFailureEvidenceKind mtProxyEvidenceForPhase(const std::string &phase, siz
         return MtProxyFailureEvidenceKind::DnsFailure;
     }
     if (phase == MtProxyPhase::TcpNotConnected
+            || phase == MtProxyPhase::TcpConnectionRefused
+            || phase == MtProxyPhase::TcpConnectTimeout
             || phase == MtProxyPhase::TcpConnectedNoPong) {
         return MtProxyFailureEvidenceKind::TcpFailure;
     }

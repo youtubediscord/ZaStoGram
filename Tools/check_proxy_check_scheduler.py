@@ -83,11 +83,11 @@ checks = [
     (PROXY_LIST, "markConnectedCurrentProxyIfNeeded", "proxy list must mark connected-state observations outside cell rendering"),
     (PROXY_LIST, "ProxyCheckScheduler.markConnectionStarting", "proxy list must publish reconnect telemetry when a real user-selected proxy reconnect starts"),
     (PROXY_LIST, "ProxyCheckScheduler.cancelOwner(this)", "proxy list must cancel queued checks on destroy"),
-    (PROXY_SETTINGS, "ProxyCheckScheduler.markConnectionStarting(currentProxyInfo)", "proxy settings save must publish reconnect telemetry before applying enabled proxy settings"),
-    (ANDROID_UTILITIES, "ProxyCheckScheduler.markConnectionStarting(SharedConfig.currentProxy)", "proxy link add/apply must publish reconnect telemetry before applying enabled proxy settings"),
+    (PROXY_SETTINGS, "ProxyCheckScheduler.markConnectionStarting(currentProxyInfo, ProxyConnectionEvent.Origin.SETTINGS_CHANGE)", "proxy settings save must publish reconnect telemetry before applying enabled proxy settings"),
+    (ANDROID_UTILITIES, "ProxyCheckScheduler.markConnectionStarting(SharedConfig.currentProxy, ProxyConnectionEvent.Origin.USER_SELECT)", "proxy link add/apply must publish reconnect telemetry before applying enabled proxy settings"),
     (ENGINE, "ProxyRuntimeStateStore.isFresh", "proxy rotation must not switch to stale availability results"),
     (ROTATION, "ProxyRuntimeStateStore.markConnected(SharedConfig.currentProxy)", "proxy rotation must share connected-state freshness with the runtime store"),
-    (ROTATION, "ProxyRuntimeStateStore.markConnectionStarting(info)", "proxy rotation must publish reconnect telemetry before applying a fallback proxy"),
+    (ROTATION, "ProxyRuntimeStateStore.markConnectionStarting(info, ProxyConnectionEvent.Origin.ROTATION_CANDIDATE)", "proxy rotation must publish reconnect telemetry before applying a fallback proxy"),
     (ENGINE, "selectFallbackCandidate", "proxy rotation must try one unchecked endpoint through a real connection instead of full-list proxy checks"),
     (ROTATION, "switch fallback endpoint=", "proxy rotation must log one-at-a-time fallback switches distinctly"),
     (ROTATION, "engine.hasScheduledAttempt", "proxy rotation must not schedule duplicate delayed sweeps"),
@@ -178,16 +178,20 @@ mark_starting_body = store_text[mark_starting_start:mark_starting_end]
 visible_mark_starting_start = visible_text.find("static void markConnectionStarting")
 visible_mark_starting_end = visible_text.find("static boolean markConnectionUsable", visible_mark_starting_start)
 visible_mark_starting_body = visible_text[visible_mark_starting_start:visible_mark_starting_end]
+held_live_idx = visible_mark_starting_body.find("decision=held_live_by_usable_success")
+routine_visible_idx = visible_mark_starting_body.find("ProxyStatusMirror.markConnectionStarting(proxyInfo, now);", held_live_idx)
+clear_usable_idx = visible_mark_starting_body.find("ProxyHealthStore.clearUsableSuccessHold(proxyInfo, now, origin.wireName)")
 if (
     "ProxyVisibleStateStore.markConnectionStarting(proxyInfo" not in mark_starting_body
     or "ProxyHealthStore.hasFreshUsableSuccess(proxyInfo, now)" not in visible_mark_starting_body
-    or "decision=held_live_by_usable_success" not in visible_mark_starting_body
-    or "ProxyStatusMirror.markConnectionStarting(proxyInfo, now);" not in visible_mark_starting_body
-    or visible_mark_starting_body.find("decision=held_live_by_usable_success") > visible_mark_starting_body.find("ProxyStatusMirror.markConnectionStarting(proxyInfo, now);")
+    or held_live_idx < 0
+    or routine_visible_idx < 0
     or "ProxyHealthStore.clearUsableSuccessHold(proxyInfo);" in visible_mark_starting_body
+    or clear_usable_idx < 0
+    or clear_usable_idx > held_live_idx
 ):
     print("Proxy check scheduler guard failed:")
-    print(f" - {STORE.relative_to(ROOT)} / {VISIBLE_STORE.relative_to(ROOT)}: explicit current-proxy reconnect attempts must hold fresh usable success before publishing visible connect_start")
+    print(f" - {STORE.relative_to(ROOT)} / {VISIBLE_STORE.relative_to(ROOT)}: routine reconnect attempts must hold fresh usable success, while explicit activation may clear the stale hold first")
     sys.exit(1)
 if "finish result=\" + (effectiveTime == -1" in scheduler_text or "onProxyChecked(listener.proxyInfo, effectiveTime)" in scheduler_text:
     print("Proxy check scheduler guard failed:")
@@ -307,7 +311,7 @@ if "ProxyCheckScheduler.markConnected" in update_status_body:
     sys.exit(1)
 manual_select_start = proxy_list_text.find("SharedConfig.currentProxy = info;")
 manual_select_update = proxy_list_text.find("for (int a = proxyStartRow; a < proxyEndRow; a++)", manual_select_start)
-manual_select_mark_starting = proxy_list_text.find("ProxyCheckScheduler.markConnectionStarting(SharedConfig.currentProxy);", manual_select_start)
+manual_select_mark_starting = proxy_list_text.find("ProxyCheckScheduler.markConnectionStarting(SharedConfig.currentProxy, ProxyConnectionEvent.Origin.USER_SELECT);", manual_select_start)
 if manual_select_start == -1 or manual_select_update == -1 or manual_select_mark_starting == -1 or manual_select_mark_starting > manual_select_update:
     print("Proxy check scheduler guard failed:")
     print(f" - {PROXY_LIST.relative_to(ROOT)}: manual proxy selection must publish reconnect telemetry before repainting visible proxy rows")
@@ -316,7 +320,7 @@ reapply_start = proxy_list_text.find("private void reapplyCurrentProxySettings()
 reapply_end = proxy_list_text.find("private void reapplyWssTransportSettings()", reapply_start)
 reapply_body = proxy_list_text[reapply_start:reapply_end]
 if (
-    "ProxyCheckScheduler.markConnectionStarting(SharedConfig.currentProxy);" not in reapply_body
+    "ProxyCheckScheduler.markConnectionStarting(SharedConfig.currentProxy, ProxyConnectionEvent.Origin.SETTINGS_CHANGE);" not in reapply_body
     or "updateCurrentProxyStatusCell();" not in reapply_body
 ):
     print("Proxy check scheduler guard failed:")

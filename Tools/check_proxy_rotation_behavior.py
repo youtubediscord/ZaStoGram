@@ -32,6 +32,8 @@ NON_PUNITIVE_ROTATION_PHASES = (
 
 PUNITIVE_ROTATION_PHASES = (
     "tcp_not_connected",
+    "tcp_connection_refused",
+    "tcp_connect_timeout",
     "host_resolve_failed",
     "host_resolve_timeout",
     "tcp_connected_no_pong",
@@ -167,18 +169,18 @@ def run_runtime_rotation_log_checks(failures: list[str]) -> None:
         )
         rotated_away_bad.write_text(
             runtime_log_fixture(
-                "06-25 20:34:00.000 proxy_control decision=terminal_proxy_config_unsupported source=native_stage origin=active_proxy account=0 phase=secret_parse_invalid_domain endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army probe=sberbank.dns.army:45631:secret_hash=1111111111111111:sberbank.dns.army active_selected=1",
-                "06-25 20:34:00.010 proxy_control decision=cancel_endpoint_attempts source=native_stage origin=active_proxy account=0 phase=secret_parse_invalid_domain endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army probe=sberbank.dns.army:45631:secret_hash=1111111111111111:sberbank.dns.army proxy_check_cancelled=0 native_cancelled=3",
-                "06-25 20:34:00.020 proxy_control decision=terminal_quarantine source=native_stage origin=active_proxy account=0 phase=secret_parse_invalid_domain evidence=config_invalid_secret endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army probe=sberbank.dns.army:45631:secret_hash=1111111111111111:sberbank.dns.army",
+                "06-25 20:34:00.000 proxy_control decision=terminal_proxy_config_unsupported source=native_stage origin=active_socket account=0 phase=secret_parse_invalid_domain endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army probe=sberbank.dns.army:45631:secret_hash=1111111111111111:sberbank.dns.army active_selected=1",
+                "06-25 20:34:00.010 proxy_control decision=cancel_endpoint_attempts source=native_stage origin=active_socket account=0 phase=secret_parse_invalid_domain endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army probe=sberbank.dns.army:45631:secret_hash=1111111111111111:sberbank.dns.army proxy_check_cancelled=0 native_cancelled=3",
+                "06-25 20:34:00.020 proxy_control decision=terminal_quarantine source=native_stage origin=active_socket account=0 phase=secret_parse_invalid_domain failure_class=secret_invalid endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army probe=sberbank.dns.army:45631:secret_hash=1111111111111111:sberbank.dns.army",
                 "06-25 20:34:01.050 proxy_control decision=visible_only source=native_stage account=0 phase=endpoint_cooldown endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army",
             ),
             encoding="utf-8",
         )
         rotated_away_good.write_text(
             runtime_log_fixture(
-                "06-25 20:34:00.000 proxy_control decision=terminal_proxy_config_unsupported source=native_stage origin=active_proxy account=0 phase=secret_parse_invalid_domain endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army probe=sberbank.dns.army:45631:secret_hash=1111111111111111:sberbank.dns.army active_selected=1",
-                "06-25 20:34:00.010 proxy_control decision=cancel_endpoint_attempts source=native_stage origin=active_proxy account=0 phase=secret_parse_invalid_domain endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army probe=sberbank.dns.army:45631:secret_hash=1111111111111111:sberbank.dns.army proxy_check_cancelled=0 native_cancelled=3",
-                "06-25 20:34:00.020 proxy_control decision=terminal_quarantine source=native_stage origin=active_proxy account=0 phase=secret_parse_invalid_domain evidence=config_invalid_secret endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army probe=sberbank.dns.army:45631:secret_hash=1111111111111111:sberbank.dns.army",
+                "06-25 20:34:00.000 proxy_control decision=terminal_proxy_config_unsupported source=native_stage origin=active_socket account=0 phase=secret_parse_invalid_domain endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army probe=sberbank.dns.army:45631:secret_hash=1111111111111111:sberbank.dns.army active_selected=1",
+                "06-25 20:34:00.010 proxy_control decision=cancel_endpoint_attempts source=native_stage origin=active_socket account=0 phase=secret_parse_invalid_domain endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army probe=sberbank.dns.army:45631:secret_hash=1111111111111111:sberbank.dns.army proxy_check_cancelled=0 native_cancelled=3",
+                "06-25 20:34:00.020 proxy_control decision=terminal_quarantine source=native_stage origin=active_socket account=0 phase=secret_parse_invalid_domain failure_class=secret_invalid endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army probe=sberbank.dns.army:45631:secret_hash=1111111111111111:sberbank.dns.army",
                 "06-25 20:34:00.030 proxy_control decision=ignored_rotated_away source=native_stage account=0 phase=ignored_cancelled_generation endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army",
                 "06-25 20:34:01.050 proxy_control decision=ignored_rotated_away source=native_stage account=0 phase=endpoint_cooldown endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army",
             ),
@@ -402,7 +404,7 @@ def main() -> int:
     punitive_body = method_body(policy, "public static boolean isPunitiveFailure")
     one_shot_terminal_body = method_body(policy, "public static boolean isOneShotTerminal")
     terminal_exact_body = method_body(policy, "private static boolean isTerminalExactConfigPhase")
-    evidence_body = method_body(policy, "public static String evidenceForPhase")
+    failure_class_body = method_body(policy, "public static String failureClassForPhase")
     require(
         "case ProxyCheckDiagnostics.HANDSHAKE_PROFILES_EXHAUSTED:" in punitive_body
         and "case ProxyCheckDiagnostics.HANDSHAKE_PROFILES_EXHAUSTED:" not in one_shot_terminal_body,
@@ -423,13 +425,13 @@ def main() -> int:
         failures,
     )
     require(
-        "case ProxyCheckDiagnostics.HANDSHAKE_PROFILES_EXHAUSTED:" in evidence_body
-        and "EVIDENCE_NO_BYTES_AFTER_CLIENT_HELLO" in evidence_body
-        and "case ProxyCheckDiagnostics.POST_HANDSHAKE_NO_APPDATA:" in evidence_body
-        and "EVIDENCE_POST_HANDSHAKE_NO_APP_DATA" in evidence_body
-        and "case ProxyCheckDiagnostics.SECRET_PARSE_INVALID_DOMAIN:" in evidence_body
-        and "EVIDENCE_CONFIG_INVALID_SECRET" in evidence_body,
-        "ProxyPhasePolicy must expose evidence classes for Java recovery decisions",
+        "case ProxyCheckDiagnostics.HANDSHAKE_PROFILES_EXHAUSTED:" in failure_class_body
+        and "FAILURE_CLASS_FAKETLS_BAD_SERVER_FLIGHT" in failure_class_body
+        and "case ProxyCheckDiagnostics.POST_HANDSHAKE_NO_APPDATA:" in failure_class_body
+        and "FAILURE_CLASS_MTPROXY_NO_RESPONSE_AFTER_SEND" in failure_class_body
+        and "case ProxyCheckDiagnostics.SECRET_PARSE_INVALID_DOMAIN:" in failure_class_body
+        and "FAILURE_CLASS_SECRET_INVALID" in failure_class_body,
+        "ProxyPhasePolicy must expose failureClass values for Java recovery decisions",
         failures,
     )
     for phase in NON_PUNITIVE_ROTATION_PHASES:
@@ -616,16 +618,16 @@ def main() -> int:
         and "ProxyHealthStore.rememberLiveFailure(currentProxy, event.phase, event.timestamp)" in on_native_stage
         and "decision=held_by_failure_hysteresis" in on_native_stage
         and "decision=backoff" in on_native_stage
-        and "evidence=" in on_native_stage
+        and "failure_class=" in on_native_stage
         and "quarantineAndCancelEndpoint(currentProxy, event.phase" in on_native_stage,
-        "handshake_profiles_exhausted must stay on the evidence-aware backoff/rotation hysteresis path",
+        "handshake_profiles_exhausted must stay on the failureClass-aware backoff/rotation hysteresis path",
         failures,
     )
     require(
-        "ProxyPhasePolicy.evidenceForPhase(state.lastDiagnostic)" in health
+        "ProxyPhasePolicy.failureClassForPhase(state.lastDiagnostic)" in health
         and "decision=backoff" in health
-        and "evidence=" in health,
-        "ProxyHealthStore backoff decisions must include typed evidence",
+        and "failure_class=" in health,
+        "ProxyHealthStore backoff decisions must include typed failureClass",
         failures,
     )
     require(

@@ -144,7 +144,7 @@ def main() -> int:
         decision = phase_return(policy, phase)
         if "failure(" not in decision or "false, false" not in decision:
             failures.append(f"ProxyPhasePolicy must classify local scheduler timeout {phase.lower()} as visible failure without backoff or rotation")
-    for phase in ("HOST_RESOLVE_FAILED", "HOST_RESOLVE_TIMEOUT", "TCP_NOT_CONNECTED"):
+    for phase in ("HOST_RESOLVE_FAILED", "HOST_RESOLVE_TIMEOUT", "TCP_NOT_CONNECTED", "TCP_CONNECTION_REFUSED", "TCP_CONNECT_TIMEOUT"):
         decision = phase_return(policy, phase)
         if "failure(" not in decision or "true, true" not in decision:
             failures.append(f"ProxyPhasePolicy must keep real network phase {phase.lower()} punitive")
@@ -216,7 +216,7 @@ def main() -> int:
     require(rotation, "engine.beginScheduledAttempt", "ProxyRotationController must schedule generation-guarded engine attempts", failures)
     require(rotation, "engine.completeScheduledAttempt", "ProxyRotationController must complete scheduled rotation attempts through the engine", failures)
     require(rotation, "ProxyRuntimeStateStore.shouldScheduleFallback", "ProxyRotationController must ask store before scheduling terminal fallback", failures)
-    require(rotation, "ProxyRuntimeStateStore.markConnectionStarting(info)", "ProxyRotationController must publish connect_start through the store", failures)
+    require(rotation, "ProxyRuntimeStateStore.markConnectionStarting(info, ProxyConnectionEvent.Origin.ROTATION_CANDIDATE)", "ProxyRotationController must publish rotation-owned connect_start through the store", failures)
     require_not(rotation, "ProxyCheckDiagnostics.shouldAccelerateProxyRotation(diagnostic)", "ProxyRotationController must not use raw diagnostic rotation policy", failures)
     require_not(rotation, "ProxyCheckDiagnostics.hasFreshFailure(info)", "ProxyRotationController candidate filtering must not duplicate store policy", failures)
 

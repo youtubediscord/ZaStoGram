@@ -63,7 +63,7 @@ def main() -> int:
     require("normalizeMtProxyOptions" in native_options + manager_cpp, "native options must be normalized once at native boundary", failures)
 
     require(
-        "native_setProxySettings(int currentAccount, String address, int port, String username, String password, String secret, MtProxyOptions options)" in java_cm,
+        "native_setProxySettings(int currentAccount, String address, int port, String username, String password, String secret, MtProxyOptions options, int activationGeneration, String activationOrigin)" in java_cm,
         "Java native_setProxySettings must take MtProxyOptions object, not positional ints",
         failures,
     )
@@ -81,7 +81,7 @@ def main() -> int:
     require("jint mtProxyTlsProfile" not in wrapper, "JNI wrapper must not receive positional mtProxyTlsProfile", failures)
 
     require("MtProxyOptions proxyMtProxyOptions" in manager_h, "ConnectionsManager must store one MtProxyOptions struct", failures)
-    require("setProxySettings(std::string address, uint16_t port, std::string username, std::string password, std::string secret, const MtProxyOptions &options)" in manager_h, "native setProxySettings must take MtProxyOptions", failures)
+    require("setProxySettings(std::string address, uint16_t port, std::string username, std::string password, std::string secret, const MtProxyOptions &options, uint32_t activationGeneration, std::string activationOrigin)" in manager_h, "native setProxySettings must take MtProxyOptions", failures)
     require("checkProxy(std::string address, uint16_t port, std::string username, std::string password, std::string secret, const MtProxyOptions &options" in manager_h, "native checkProxy must take MtProxyOptions", failures)
     require("MtProxyOptions mtProxyOptions" in proxy_check, "ProxyCheckInfo must store one MtProxyOptions struct", failures)
     require("setOverrideProxy(std::string address, uint16_t port, std::string username, std::string password, std::string secret, const MtProxyOptions &options)" in socket_h, "ConnectionSocket override proxy must take MtProxyOptions", failures)

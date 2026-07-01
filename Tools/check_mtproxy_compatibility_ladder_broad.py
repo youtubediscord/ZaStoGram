@@ -205,8 +205,9 @@ def main() -> int:
     require(
         "if (!isActiveProxyEvent(event))" in native_stage
         and "updateProxyRowOnly" in native_stage
-        and native_stage.find("if (!isActiveProxyEvent(event))") < native_stage.find("ProxyPhasePolicy.isProxyUsableSuccessPhase"),
-        "candidate/non-active events must enter row-only handling before active visible status/backoff policy",
+        and "ProxyConnectionEvent.isActiveProxyOrigin(event.origin)" in reducer
+        and native_stage.find("if (!isActiveProxyEvent(event))") < native_stage.find("if (verdict.usableSuccess)"),
+        "candidate/non-active origins must enter row-only handling before active visible status/backoff policy",
         failures,
     )
     require(

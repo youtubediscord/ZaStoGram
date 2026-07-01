@@ -296,6 +296,7 @@ public class SharedConfig {
     public static boolean directShare = true;
     public static boolean inappCamera = true;
     public static boolean roundCamera16to9 = true;
+    public static boolean roundVideosAsRegularMedia;
     public static boolean noSoundHintShowed = false;
     public static boolean streamMedia = true;
     public static boolean streamAllVideo = false;
@@ -646,9 +647,9 @@ public class SharedConfig {
             mtProxyTimingMode = clampInt(preferences.getInt("mtProxyTimingMode", 0), 0, 2);
             mtProxyStartupCoverMode = clampInt(preferences.getInt("mtProxyStartupCoverMode", 0), 0, 2);
             wssTransportMode = normalizeWssTransportMode(preferences.getInt("wssTransportMode", TRANSPORT_LEGACY_PROXY));
-            // Auto-enable official WSS once on first run (DC2/DC4 web relay,
-            // used only when no proxy is configured). The toggle stays user-
-            // controllable; the flag makes turning it off stick permanently.
+            // Auto-enable official Telegram WSS once on first run. Official
+            // routes are native MTProto-over-WebSocket for DC2/DC4, not a
+            // local SOCKS bridge and not a custom gateway.
             if (!preferences.getBoolean("wss_default_applied", false)) {
                 if (wssTransportMode == TRANSPORT_LEGACY_PROXY) {
                     wssTransportMode = TRANSPORT_WSS_OFFICIAL;
@@ -734,6 +735,7 @@ public class SharedConfig {
             inappCamera = preferences.getBoolean("inappCamera", true);
             hasCameraCache = preferences.contains("cameraCache");
             roundCamera16to9 = true;
+            roundVideosAsRegularMedia = preferences.getBoolean("roundVideosAsRegularMedia", false);
             repeatMode = preferences.getInt("repeatMode", 0);
             fontSize = preferences.getInt("fons_size", AndroidUtilities.isTablet() && !AndroidUtilities.isFold() ? 18 : 16);
             fontSizeIsDefault = !preferences.contains("fons_size");
@@ -1532,6 +1534,14 @@ public class SharedConfig {
         editor.apply();
     }
 
+    public static void toggleRoundVideosAsRegularMedia() {
+        roundVideosAsRegularMedia = !roundVideosAsRegularMedia;
+        SharedPreferences preferences = MessagesController.getGlobalMainSettings();
+        SharedPreferences.Editor editor = preferences.edit();
+        editor.putBoolean("roundVideosAsRegularMedia", roundVideosAsRegularMedia);
+        editor.apply();
+    }
+
     public static void setDistanceSystemType(int type) {
         distanceSystemType = type;
         SharedPreferences preferences = MessagesController.getGlobalMainSettings();
@@ -1786,7 +1796,7 @@ public class SharedConfig {
             editor.putBoolean("proxy_enabled_calls", false);
             editor.apply();
             if (enabled) {
-                ConnectionsManager.setProxySettings(false, "", 0, "", "", "");
+                ConnectionsManager.setProxySettings(false, "", 0, "", "", "", ProxyConnectionEvent.Origin.SETTINGS_CHANGE);
             }
         }
         if (currentWssSocksProxy == proxyInfo) {

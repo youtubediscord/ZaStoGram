@@ -100,6 +100,17 @@ public final class ProxyEndpointKey {
         return normalizeKeyPart(proxyInfo.address, true) + ":" + proxyInfo.port;
     }
 
+    public static String networkFromLiveStage(String endpointKey) {
+        if (endpointKey == null || endpointKey.length() == 0) {
+            return "";
+        }
+        int kindIndex = liveStageKindIndex(endpointKey);
+        if (kindIndex > 0) {
+            return endpointKey.substring(0, kindIndex);
+        }
+        return endpointKey;
+    }
+
     public static String endpoint(SharedConfig.ProxyInfo proxyInfo) {
         if (proxyInfo == null) {
             return "null";
@@ -230,5 +241,18 @@ public final class ProxyEndpointKey {
 
     private static void appendKeyPart(StringBuilder builder, String value) {
         builder.append(value.length()).append(':').append(value);
+    }
+
+    private static int liveStageKindIndex(String endpointKey) {
+        int result = endpointKey.indexOf(":ee:");
+        if (result > 0) {
+            return result;
+        }
+        result = endpointKey.indexOf(":dd:");
+        if (result > 0) {
+            return result;
+        }
+        result = endpointKey.indexOf(":legacy");
+        return result > 0 ? result : -1;
     }
 }

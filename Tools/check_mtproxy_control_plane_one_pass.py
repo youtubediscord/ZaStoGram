@@ -82,7 +82,7 @@ def base_log(*lines: str) -> str:
         "logcat.txt:3: 06-30 13:20:30.020 connection(0x1) mtproxy_startup endpoint_handshake_ok reason=server_hello_hmac_ok",
         "logcat.txt:4: 06-30 13:20:30.090 connection(0x1) mtproxy_startup first_tls_app_recv payload=1015",
         "logcat.txt:5: 06-30 13:20:30.100 connection(0x1) mtproxy_startup endpoint_data_path_success network_key=sberbank.dns.army:45631 key=sberbank.dns.army:45631:ee:sberbank.dns.army reason=first_tls_app_recv",
-        "logcat.txt:6: 06-30 13:20:30.110 proxy_control decision=visible_usable_success source=native_stage origin=active_proxy account=0 phase=first_tls_app_recv endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army",
+        "logcat.txt:6: 06-30 13:20:30.110 proxy_control decision=visible_usable_success source=native_stage origin=active_socket account=0 phase=first_tls_app_recv endpoint=sberbank.dns.army:45631:ee:sberbank.dns.army",
     ]
     for index, line in enumerate(lines, start=7):
         result.append(f"logcat.txt:{index}: {line}")
@@ -150,8 +150,8 @@ def verify_runtime_contract(failures: list[str]) -> None:
 
     good_profiles_hysteresis = run_verifier(
         base_log(
-            "06-30 13:20:40.000 proxy_control decision=backoff source=native_stage origin=active_proxy account=0 phase=handshake_profiles_exhausted evidence=no_bytes_after_client_hello endpoint=fast2.mtproxy.zip:443:ee:wb.ru failures=1",
-            "06-30 13:20:40.010 proxy_control decision=held_by_failure_hysteresis source=native_stage origin=active_proxy account=0 phase=handshake_profiles_exhausted evidence=no_bytes_after_client_hello endpoint=fast2.mtproxy.zip:443:ee:wb.ru failures=1",
+            "06-30 13:20:40.000 proxy_control decision=backoff source=native_stage origin=active_socket account=0 phase=handshake_profiles_exhausted failure_class=faketls_bad_server_flight endpoint=fast2.mtproxy.zip:443:ee:wb.ru failures=1",
+            "06-30 13:20:40.010 proxy_control decision=held_by_failure_hysteresis source=native_stage origin=active_socket account=0 phase=handshake_profiles_exhausted failure_class=faketls_bad_server_flight endpoint=fast2.mtproxy.zip:443:ee:wb.ru failures=1",
         )
     )
     require(
@@ -162,10 +162,10 @@ def verify_runtime_contract(failures: list[str]) -> None:
 
     good_terminal_quarantine = run_verifier(
         base_log(
-            "06-30 13:20:40.000 proxy_control decision=terminal_proxy_config_unsupported source=native_stage origin=active_proxy account=0 phase=secret_parse_invalid_domain endpoint=fast2.mtproxy.zip:443:ee:wb.ru probe=fast2.mtproxy.zip:443:secret_hash=1111111111111111:wb.ru active_selected=1",
-            "06-30 13:20:40.010 proxy_control decision=cancel_endpoint_attempts source=native_stage origin=active_proxy account=0 phase=secret_parse_invalid_domain endpoint=fast2.mtproxy.zip:443:ee:wb.ru probe=fast2.mtproxy.zip:443:secret_hash=1111111111111111:wb.ru proxy_check_cancelled=0 native_cancelled=3",
-            "06-30 13:20:40.020 proxy_control decision=terminal_quarantine source=native_stage origin=active_proxy account=0 phase=secret_parse_invalid_domain evidence=config_invalid_secret endpoint=fast2.mtproxy.zip:443:ee:wb.ru probe=fast2.mtproxy.zip:443:secret_hash=1111111111111111:wb.ru",
-            "06-30 13:20:40.030 proxy_control decision=ignored_cancelled_generation source=native_stage origin=active_proxy account=0 phase=ignored_cancelled_generation endpoint=fast2.mtproxy.zip:443:ee:wb.ru probe=fast2.mtproxy.zip:443:secret_hash=1111111111111111:wb.ru",
+            "06-30 13:20:40.000 proxy_control decision=terminal_proxy_config_unsupported source=native_stage origin=active_socket account=0 phase=secret_parse_invalid_domain endpoint=fast2.mtproxy.zip:443:ee:wb.ru probe=fast2.mtproxy.zip:443:secret_hash=1111111111111111:wb.ru active_selected=1",
+            "06-30 13:20:40.010 proxy_control decision=cancel_endpoint_attempts source=native_stage origin=active_socket account=0 phase=secret_parse_invalid_domain endpoint=fast2.mtproxy.zip:443:ee:wb.ru probe=fast2.mtproxy.zip:443:secret_hash=1111111111111111:wb.ru proxy_check_cancelled=0 native_cancelled=3",
+            "06-30 13:20:40.020 proxy_control decision=terminal_quarantine source=native_stage origin=active_socket account=0 phase=secret_parse_invalid_domain failure_class=secret_invalid endpoint=fast2.mtproxy.zip:443:ee:wb.ru probe=fast2.mtproxy.zip:443:secret_hash=1111111111111111:wb.ru",
+            "06-30 13:20:40.030 proxy_control decision=ignored_cancelled_generation source=native_stage origin=active_socket account=0 phase=ignored_cancelled_generation endpoint=fast2.mtproxy.zip:443:ee:wb.ru probe=fast2.mtproxy.zip:443:secret_hash=1111111111111111:wb.ru",
         )
     )
     require(
@@ -226,9 +226,9 @@ def main() -> int:
     analyzer = read(TOOLS / "analyze_mtproxy_markers.py")
     phase_contract = read(TOOLS / "mtproxy_phase_contract.py")
 
-    require("enum Origin" in event and "ACTIVE_PROXY" in event and "PROXY_CHECK" in event and "PROXY_LIST_ROW" in event, "ProxyConnectionEvent must carry explicit origin values", failures)
-    require("origin" in wrapper and "probeKey" in wrapper and "onProxyConnectionStageChanged" in wrapper and "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V" in wrapper, "JNI proxy stage callback must carry origin and probe key", failures)
-    require("onProxyConnectionStageChanged(int32_t instanceNum, std::string diagnostic, std::string endpointKey, std::string probeKey, std::string origin)" in defines, "native delegate must expose proxy stage origin and probe key", failures)
+    require("enum Origin" in event and "ACTIVE_SOCKET" in event and "PROXY_CHECK" in event and "PROXY_LIST_ROW" in event, "ProxyConnectionEvent must carry explicit origin values", failures)
+    require("origin" in wrapper and "probeKey" in wrapper and "activationGeneration" in wrapper and "onProxyConnectionStageChanged" in wrapper and "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;I)V" in wrapper, "JNI proxy stage callback must carry origin, probe key, and activation generation", failures)
+    require("onProxyConnectionStageChanged(int32_t instanceNum, std::string diagnostic, std::string endpointKey, std::string probeKey, std::string origin, int32_t activationGeneration)" in defines, "native delegate must expose proxy stage origin, probe key, and activation generation", failures)
     require(
         "return ProxyEventReducer.reduce(event)" in runtime,
         "ProxyRuntimeStateStore.onNativeStage must delegate to ProxyEventReducer",
@@ -237,8 +237,8 @@ def main() -> int:
     require(
         "if (!isActiveProxyEvent(event))" in reducer
         and "updateProxyRowOnly" in reducer
-        and "active_origin_required" in runtime + reducer,
-        "ProxyEventReducer must route non-active proxy events to row-only handling before active visible/backoff policy",
+        and "ProxyConnectionEvent.isActiveProxyOrigin(event.origin)" in runtime + reducer,
+        "ProxyEventReducer must route non-active proxy origins to row-only handling before active visible/backoff policy",
         failures,
     )
     require(
@@ -255,8 +255,8 @@ def main() -> int:
     )
     require(
         "ignore_non_active_origin" in rotation
-        and "ProxyConnectionEvent.Origin.ACTIVE_PROXY.wireName.equals(origin)" in rotation,
-        "ProxyRotationController must ignore proxyConnectionStageChanged events whose origin is not active_proxy",
+        and "ProxyConnectionEvent.isActiveProxyOrigin(ProxyConnectionEvent.Origin.fromNative(origin))" in rotation,
+        "ProxyRotationController must ignore proxyConnectionStageChanged events whose origin is not an active-socket cause",
         failures,
     )
 
@@ -272,33 +272,34 @@ def main() -> int:
         "terminal exact config and one-shot terminal Java verdicts must be limited to invalid secret/domain phases",
         failures,
     )
-    evidence_body = method_body(phase_policy, "public static String evidenceForPhase")
+    failure_class_body = method_body(phase_policy, "public static String failureClassForPhase")
     require(
-        "case ProxyCheckDiagnostics.HANDSHAKE_PROFILES_EXHAUSTED:" in evidence_body
-        and "EVIDENCE_NO_BYTES_AFTER_CLIENT_HELLO" in evidence_body
-        and "case ProxyCheckDiagnostics.POST_HANDSHAKE_NO_APPDATA:" in evidence_body
-        and "EVIDENCE_POST_HANDSHAKE_NO_APP_DATA" in evidence_body
-        and "case ProxyCheckDiagnostics.SECRET_PARSE_INVALID_DOMAIN:" in evidence_body
-        and "EVIDENCE_CONFIG_INVALID_SECRET" in evidence_body,
-        "ProxyPhasePolicy must expose typed failure evidence names for Java recovery logs",
+        "case ProxyCheckDiagnostics.HANDSHAKE_PROFILES_EXHAUSTED:" in failure_class_body
+        and "FAILURE_CLASS_FAKETLS_BAD_SERVER_FLIGHT" in failure_class_body
+        and "case ProxyCheckDiagnostics.POST_HANDSHAKE_NO_APPDATA:" in failure_class_body
+        and "FAILURE_CLASS_MTPROXY_NO_RESPONSE_AFTER_SEND" in failure_class_body
+        and "case ProxyCheckDiagnostics.SECRET_PARSE_INVALID_DOMAIN:" in failure_class_body
+        and "FAILURE_CLASS_SECRET_INVALID" in failure_class_body,
+        "ProxyPhasePolicy must expose typed failureClass names for Java recovery logs",
         failures,
     )
     reducer_body = method_body(reducer, "static ProxyRuntimeStateStore.Decision reduce")
     require(
-        "ProxyPhasePolicy.evidenceForPhase(event.phase)" in reducer
+        "String failureClass = verdict.failureClass" in reducer
         and "decision=backoff" in reducer_body
-        and " evidence=\" + evidence" in reducer_body
+        and " failure_class=\" + verdict.failureClass" in reducer_body
+        and " sticky_until_ms=\" + verdict.stickyUntilMs" in reducer_body
         and "decision=held_by_failure_hysteresis" in reducer_body
         and "decision=rotation_trigger" in reducer_body
         and " failures=\" + failure.rotationFailures" in reducer_body,
-        "ProxyEventReducer must log evidence-aware backoff, hysteresis, and rotation-trigger decisions",
+        "ProxyEventReducer must log verdict-aware backoff, hysteresis, and rotation-trigger decisions",
         failures,
     )
     require(
-        "ProxyPhasePolicy.evidenceForPhase(state.lastDiagnostic)" in health
-        and " evidence=\" + evidence" in health
+        "ProxyPhasePolicy.failureClassForPhase(state.lastDiagnostic)" in health
+        and " failure_class=\" + failureClass" in health
         and "decision=backoff" in health,
-        "ProxyHealthStore backoff log must include typed evidence",
+        "ProxyHealthStore backoff log must include typed failureClass",
         failures,
     )
 

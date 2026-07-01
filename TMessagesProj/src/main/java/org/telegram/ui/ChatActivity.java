@@ -22665,7 +22665,7 @@ public class ChatActivity extends BaseFragment implements
             }
             sendSecretMessageRead(messageObject, true);
 
-            if ((messageObject.isRoundVideo() || messageObject.isVideo()) && fragmentView != null && fragmentView.getParent() != null) {
+            if ((messageObject.shouldDisplayRoundVideoInline() || messageObject.isVideoOrRoundVideoAsRegularMedia()) && fragmentView != null && fragmentView.getParent() != null) {
                 if (!messageObject.isVoiceTranscriptionOpen()) {
                     MediaController.getInstance().setTextureView(createTextureView(true), aspectRatioFrameLayout, videoPlayerContainer, true);
                     boolean needScroll = false;
@@ -22700,8 +22700,9 @@ public class ChatActivity extends BaseFragment implements
                         continue;
                     }
 
-                    boolean isVideo = messageObject1.isVideo();
-                    if (messageObject1.isRoundVideo() || isVideo) {
+                    boolean isRoundVideo = messageObject1.shouldDisplayRoundVideoInline();
+                    boolean isVideo = messageObject1.isVideoOrRoundVideoAsRegularMedia();
+                    if (isRoundVideo || isVideo) {
                         cell.checkVideoPlayback(!messageObject.equals(messageObject1), null);
                         if (!MediaController.getInstance().isPlayingMessage(messageObject1)) {
                             if (isVideo && !MediaController.getInstance().isGoingToShowMessageObject(messageObject1)) {
@@ -22717,7 +22718,7 @@ public class ChatActivity extends BaseFragment implements
                         } else if (isVideo) {
                             cell.updateButtonState(false, true, false);
                         }
-                        if (messageObject1.isRoundVideo()) {
+                        if (isRoundVideo) {
                             int position = chatListView.getChildAdapterPosition(cell);
                             if (position >= 0) {
                                 if (MediaController.getInstance().isPlayingMessage(messageObject1)) {
@@ -22811,7 +22812,7 @@ public class ChatActivity extends BaseFragment implements
                         continue;
                     }
 
-                    if (messageObject.isRoundVideo()) {
+                    if (messageObject.shouldDisplayRoundVideoInline()) {
                         if (!MediaController.getInstance().isPlayingMessage(messageObject)) {
                             Bitmap bitmap = null;
                             if (id == NotificationCenter.messagePlayingDidReset && cell.getMessageObject() != null && cell.getMessageObject().getId() == messageId && videoTextureView != null) {
@@ -30308,7 +30309,7 @@ public class ChatActivity extends BaseFragment implements
                 return false;
             }
             hideHints(true);
-            if (visibleMessage.isRoundVideo()) {
+            if (visibleMessage.isRoundVideo() && !visibleMessage.shouldOpenRoundVideoAsRegularMedia()) {
                 boolean result = MediaController.getInstance().playMessage(visibleMessage);
                 MediaController.getInstance().setVoiceMessagesPlaylist(result ? createVoiceMessagesPlaylist(visibleMessage, false) : null, false);
                 return result;
@@ -30340,7 +30341,7 @@ public class ChatActivity extends BaseFragment implements
                     return;
                 }
                 MessageObject message = MediaController.getInstance().getPlayingMessageObject();
-                if (message != null && message.isVideo()) {
+                if (message != null && message.isVideoOrRoundVideoAsRegularMedia()) {
                     PhotoViewer.getInstance().setParentActivity(ChatActivity.this, themeDelegate);
                     getFileLoader().setLoadingVideoForPlayer(message.getDocument(), false);
                     MediaController.getInstance().cleanupPlayer(true, true, false, true);
@@ -36398,7 +36399,7 @@ public class ChatActivity extends BaseFragment implements
                 if (webPage != null) {
                     EmbedBottomSheet.show(ChatActivity.this, messageObject, photoViewerProvider, webPage.site_name, webPage.title, webPage.url, webPage.embed_url, webPage.embed_width, webPage.embed_height, seekTime, isKeyboardVisible());
                 } else {
-                    if (!messageObject.isVideo() && messageObject.replyMessageObject != null) {
+                    if (!messageObject.isVideoOrRoundVideoAsRegularMedia() && messageObject.replyMessageObject != null) {
                         MessageObject obj = messagesDict[messageObject.replyMessageObject.getDialogId() == dialog_id ? 0 : 1].get(messageObject.replyMessageObject.getId());
                         cell = null;
                         if (obj == null) {
@@ -36497,12 +36498,12 @@ public class ChatActivity extends BaseFragment implements
                 }
             }
         }
-        if (message.isVideo()) {
+        if (message.isVideoOrRoundVideoAsRegularMedia()) {
             sendSecretMessageRead(message, true);
         }
         PhotoViewer.getInstance().setParentActivity(this, themeDelegate);
         MessageObject playingObject = MediaController.getInstance().getPlayingMessageObject();
-        if (cell != null && playingObject != null && playingObject.isVideo()) {
+        if (cell != null && playingObject != null && playingObject.isVideoOrRoundVideoAsRegularMedia()) {
             getFileLoader().setLoadingVideoForPlayer(playingObject.getDocument(), false);
             if (playingObject.equals(message)) {
                 AnimatedFileDrawable animation = cell.getPhotoImage().getAnimation();
@@ -36522,12 +36523,12 @@ public class ChatActivity extends BaseFragment implements
             }
             MediaController.getInstance().cleanupPlayer(true, true, false, playingObject.equals(message));
         }
-        if (chatMode == MODE_SCHEDULED && (message.isVideo() || message.type == MessageObject.TYPE_PHOTO)) {
+        if (chatMode == MODE_SCHEDULED && (message.isVideoOrRoundVideoAsRegularMedia() || message.type == MessageObject.TYPE_PHOTO)) {
             PhotoViewer.getInstance().setParentChatActivity(ChatActivity.this);
             ArrayList<MessageObject> arrayList = new ArrayList<>();
             for (int a = 0, N = messages.size(); a < N; a++) {
                 MessageObject m = messages.get(a);
-                if (m.isVideo() || m.type == MessageObject.TYPE_PHOTO) {
+                if (m.isVideoOrRoundVideoAsRegularMedia() || m.type == MessageObject.TYPE_PHOTO) {
                     arrayList.add(0, m);
                 }
             }
@@ -41148,7 +41149,7 @@ public class ChatActivity extends BaseFragment implements
                 StickersAlert alert = new StickersAlert(getParentActivity(), ChatActivity.this, message.getInputStickerSet(), null, bottomChannelButtonsLayout.getVisibility() != View.VISIBLE && (currentChat == null || ChatObject.canSendStickers(currentChat)) ? chatActivityEnterView : null, themeDelegate, false);
                 alert.setCalcMandatoryInsets(isKeyboardVisible());
                 showDialog(alert);
-            } else if (message.isVideo() || message.type == MessageObject.TYPE_PHOTO || message.type == MessageObject.TYPE_TEXT && !message.isWebpageDocument() || message.isGif()) {
+            } else if (message.isVideoOrRoundVideoAsRegularMedia() || message.type == MessageObject.TYPE_PHOTO || message.type == MessageObject.TYPE_TEXT && !message.isWebpageDocument() || message.isGif()) {
                 if (message.isSponsored()) {
                     if (message.isGif() || message.isPhoto()) {
                         logSponsoredClicked(message, true, false);

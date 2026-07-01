@@ -167,6 +167,7 @@ public class ThemeActivity extends BaseFragment implements NotificationCenter.No
     private int searchEngineRow;
     private int bluetoothScoRow;
     private int hideMainScreenStoriesRow;
+    private int roundVideosAsRegularMediaRow;
     private int enableAnimationsRow;
     private int settings2Row;
     @Keep
@@ -598,6 +599,7 @@ public class ThemeActivity extends BaseFragment implements NotificationCenter.No
         searchEngineRow = -1;
         bluetoothScoRow = -1;
         hideMainScreenStoriesRow = -1;
+        roundVideosAsRegularMediaRow = -1;
         settings2Row = -1;
 
         swipeGestureHeaderRow = -1;
@@ -707,6 +709,7 @@ public class ThemeActivity extends BaseFragment implements NotificationCenter.No
             }
             sendByEnterRow = rowCount++;
             hideMainScreenStoriesRow = rowCount++;
+            roundVideosAsRegularMediaRow = rowCount++;
             distanceRow = rowCount++;
             otherSectionRow = rowCount++;
         } else {
@@ -1140,6 +1143,11 @@ public class ThemeActivity extends BaseFragment implements NotificationCenter.No
                     ((TextCheckCell) view).setChecked(!hideStories);
                 }
                 getNotificationCenter().postNotificationName(NotificationCenter.storiesEnabledUpdate);
+            } else if (position == roundVideosAsRegularMediaRow) {
+                SharedConfig.toggleRoundVideosAsRegularMedia();
+                if (view instanceof TextCheckCell) {
+                    ((TextCheckCell) view).setChecked(SharedConfig.roundVideosAsRegularMedia);
+                }
             } else if (position == raiseToSpeakRow) {
                 SharedConfig.toggleRaiseToSpeak();
                 if (view instanceof TextCheckCell) {
@@ -2635,6 +2643,8 @@ public class ThemeActivity extends BaseFragment implements NotificationCenter.No
                     } else if (position == hideMainScreenStoriesRow) {
                         SharedPreferences preferences = MessagesController.getGlobalMainSettings();
                         textCheckCell.setTextAndValueAndCheck(getString(R.string.HideMainScreenStories), getString(R.string.HideMainScreenStoriesInfo), preferences.getBoolean("hide_main_screen_stories", false), true, true);
+                    } else if (position == roundVideosAsRegularMediaRow) {
+                        textCheckCell.setTextAndValueAndCheck(getString(R.string.RoundVideosAsRegularMedia), getString(R.string.RoundVideosAsRegularMediaInfo), SharedConfig.roundVideosAsRegularMedia, true, true);
                     } else if (position == chatBlurRow) {
                         textCheckCell.setTextAndCheck(getString("BlurInChat", R.string.BlurInChat), SharedConfig.chatBlurEnabled(), true);
                     }
@@ -2770,7 +2780,7 @@ public class ThemeActivity extends BaseFragment implements NotificationCenter.No
                 return TYPE_BRIGHTNESS;
             } else if (position == scheduleLocationRow || position == sendByEnterRow ||
                     position == raiseToSpeakRow || position == raiseToListenRow || position == pauseOnRecordRow ||
-                    position == directShareRow || position == hideMainScreenStoriesRow || position == chatBlurRow || position == pauseOnMediaRow || position == nextMediaTapRow || position == sensitiveContentRow) {
+                    position == directShareRow || position == hideMainScreenStoriesRow || position == roundVideosAsRegularMediaRow || position == chatBlurRow || position == pauseOnMediaRow || position == nextMediaTapRow || position == sensitiveContentRow) {
                 return TYPE_TEXT_CHECK;
             } else if (position == textSizeRow) {
                 return TYPE_TEXT_SIZE;

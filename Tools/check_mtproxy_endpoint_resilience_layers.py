@@ -154,6 +154,8 @@ def main():
         "MT_PROXY_ENDPOINT_USABLE_SUCCESS_HOLD_MS" in endpoint_policy
         and "usableSuccessRemainingMsLocked" in shadow_body
         and has_phase(shadow_body, "tcp_not_connected", phase_constants)
+        and has_phase(shadow_body, "tcp_connection_refused", phase_constants)
+        and has_phase(shadow_body, "tcp_connect_timeout", phase_constants)
         and 'diagnostic == "true_client_hello_timeout"' in shadow_body
         and 'diagnostic == "client_hello_sent_no_server_hello"' in shadow_body
         and 'diagnostic == "mtproxy_packet_sent_no_response"' in shadow_body
@@ -173,6 +175,8 @@ def main():
         and 'diagnostic == "host_resolve_failed"' in cooldown_body
         and 'diagnostic == "host_resolve_timeout"' in cooldown_body
         and has_phase(cooldown_body, "tcp_not_connected", phase_constants)
+        and has_phase(cooldown_body, "tcp_connection_refused", phase_constants)
+        and has_phase(cooldown_body, "tcp_connect_timeout", phase_constants)
         and "priority" in cooldown_body
         and "interactiveNetworkFailure" in cooldown_body
         and "MT_PROXY_ENDPOINT_INTERACTIVE_NETWORK_COOLDOWN_MAX_MS" in cooldown_body
@@ -495,6 +499,8 @@ def main():
     )
     require(
         'diagnostic == "tcp_not_connected"' in recipe_body
+        and 'diagnostic == "tcp_connection_refused"' in recipe_body
+        and 'diagnostic == "tcp_connect_timeout"' in recipe_body
         and "return false;" in recipe_body
         and "post_handshake_no_appdata" not in recipe_body
         and "host_resolve_failed" not in recipe_body
@@ -523,6 +529,8 @@ def main():
         '"host_resolve_failed"' in state_key_body
         and '"host_resolve_timeout"' in state_key_body
         and has_phase(state_key_body, "tcp_not_connected", phase_constants)
+        and has_phase(state_key_body, "tcp_connection_refused", phase_constants)
+        and has_phase(state_key_body, "tcp_connect_timeout", phase_constants)
         and '"tcp_connected_no_pong"' in state_key_body
         and '"mtproxy_packet_sent_no_response"' not in state_key_body
         and '"dropped_early_after_appdata"' in state_key_body
